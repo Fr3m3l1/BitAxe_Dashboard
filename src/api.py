@@ -72,6 +72,22 @@ def receive_data():
         ))
         conn.commit()
 
-    # Send a Telegram notification
-    send_telegram_notification("Neue Miner-Daten empfangen und gespeichert.")
+    # Check if the temperature is too high
+    if data.get('temp') and data.get('temp') > 80:
+        send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C)")
+    else:
+        send_telegram_notification(f"Temperature is normal ({data.get('temp')}°C)")
+
+    if data.get('vrTemp') and data.get('vrTemp') > 70:
+        send_telegram_notification(f"Warning: High VR temperature detected ({data.get('vrTemp')}°C)")
+
+    if data.get('isUsingFallbackStratum'):
+        send_telegram_notification("Warning: Using fallback stratum")
+
+    if data.get('sharesRejected') and data.get('sharesAccepted'):
+        reject_rate = data.get('sharesRejected') / (data.get('sharesRejected') + data.get('sharesAccepted'))
+        if reject_rate > 0.1:
+            send_telegram_notification(f"Warning: High reject rate detected ({reject_rate:.2%})")
+
+
     return jsonify({'message': 'Data saved successfully'}), 200

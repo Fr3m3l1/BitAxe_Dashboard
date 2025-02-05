@@ -1,4 +1,5 @@
 import dash
+import dash_bootstrap_components as dbc
 from dash import dcc, html
 from dash.dependencies import Input, Output
 from database import get_latest_data, get_historical_data
@@ -8,22 +9,48 @@ def init_dash_app(flask_app):
         __name__,
         server=flask_app,
         url_base_pathname='/dashboard/',
-        suppress_callback_exceptions=True
+        suppress_callback_exceptions=True,
+        external_stylesheets=[dbc.themes.BOOTSTRAP]
     )
     
-    dash_app.layout = html.Div([
-        html.H1("Miner Dashboard"),
-        dcc.Interval(id='interval-component', interval=60*1000, n_intervals=0),
-        # Latest data table
-        html.Div(id='live-update'),
-        html.Br(),
-        # Graphs showing stats over time
-        dcc.Graph(id='temp-graph'),
-        dcc.Graph(id='hashrate-graph'),
-        dcc.Graph(id='fanrpm-graph'),
-        html.Br(),
-        html.A("Logout", href="/logout")
-    ])
+    dash_app.layout = dbc.Container([
+        dbc.Row(
+            dbc.Col(html.H1("Miner Dashboard"), width=12),
+            className="mt-4"
+        ),
+        dbc.Row([
+            dbc.Col(
+                dbc.Card([
+                    dbc.CardHeader("Latest Data"),
+                    dbc.CardBody(html.Div(id='live-update', children="Loading data..."))
+                ], className="mb-4"),
+                width=4
+            ),
+            dbc.Col(
+                dbc.Card([
+                    dbc.CardHeader("Temperature over Time"),
+                    dbc.CardBody(dcc.Graph(id='temp-graph'))
+                ], className="mb-4"),
+                width=8
+            )
+        ]),
+        dbc.Row(
+            dbc.Col(
+                dbc.Card([
+                    dbc.CardHeader("Hash Rate over Time"),
+                    dbc.CardBody(dcc.Graph(id='hashrate-graph'))
+                ], className="mb-4"),
+                width=12
+            )
+        ),
+        dbc.Row(
+            dbc.Col(
+                html.Div(html.A("Logout", href="/logout", className="btn btn-secondary")),
+                className="text-center mb-4"
+            )
+        ),
+        dcc.Interval(id='interval-component', interval=60*1000, n_intervals=0)
+    ], fluid=True)
 
     # Callback for displaying the latest received data in a table
     @dash_app.callback(Output('live-update', 'children'),
@@ -32,14 +59,25 @@ def init_dash_app(flask_app):
         data = get_latest_data()
         if not data:
             return html.Div("No data available.")
-        # Create an HTML table of the latest data
-        header = [html.Tr([html.Th("Field"), html.Th("Value")])]
-        rows = [html.Tr([html.Td(key), html.Td(str(value))]) for key, value in data.items()]
-        table = html.Table(header + rows, style={
-            'width': '100%',
-            'border': '1px solid #ddd',
-            'border-collapse': 'collapse'
-        })
+        
+        # only show the following fields in the table
+        fields = ['id', 'power', 'temp','vrTemp', 'hashRate', 'bestDiff', 'bestSessionDiff', 'sharesAccepted', 'sharesRejected', 'uptimeSeconds', 'timestamp']
+        data = {key: value for key, value in data.items() if key in fields}
+
+        table_header = html.Thead(
+            html.Tr([html.Th("Field"), html.Th("Value")])
+        )
+        table_body = html.Tbody([
+            html.Tr([html.Td(key), html.Td(str(value))]) for key, value in data.items()
+        ])
+        table = dbc.Table(
+            [table_header, table_body],
+            bordered=True,
+            hover=True,
+            responsive=True,
+            striped=True,
+            className="mb-0"
+        )
         return table
 
     # Callback for updating the temperature graph
@@ -90,32 +128,6 @@ def init_dash_app(flask_app):
                 "title": "Hash Rate over Time",
                 "xaxis": {"title": "Time"},
                 "yaxis": {"title": "Hash Rate"}
-            }
-        }
-        return figure
-
-    # Callback for updating the fan RPM graph
-    @dash_app.callback(
-        Output('fanrpm-graph', 'figure'),
-        [Input('interval-component', 'n_intervals')]
-    )
-    def update_fanrpm_graph(n):
-        data = get_historical_data()
-        if not data:
-            return {"data": []}
-        timestamps = [record['timestamp'] for record in data]
-        fanrpms = [record['fanrpm'] for record in data]
-        figure = {
-            "data": [{
-                "x": timestamps,
-                "y": fanrpms,
-                "type": "line",
-                "name": "Fan RPM"
-            }],
-            "layout": {
-                "title": "Fan RPM over Time",
-                "xaxis": {"title": "Time"},
-                "yaxis": {"title": "Fan RPM"}
             }
         }
         return figure
