@@ -1,7 +1,8 @@
 import sqlite3
 from flask import Blueprint, request, jsonify
-from database import DATABASE
+from database import DATABASE, get_latest_data
 from telegram_notification import send_telegram_notification
+import datetime
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -13,6 +14,15 @@ def receive_data():
     data = request.get_json()
     if not data:
         return jsonify({'error': 'No data received'}), 400
+    
+    # compare with the data before saving it
+    # get the last data from the database
+    last_data = get_latest_data()
+    
+    if last_data:
+        # check if the last data has a lower bestDiff than the current data
+        if last_data['bestDiff'] > data.get('bestDiff'):
+            send_telegram_notification(f"CONGRATULATIONS! New best difficulty: {data.get('bestDiff')}")
 
     with sqlite3.connect(DATABASE) as conn:
         c = conn.cursor()
@@ -75,8 +85,6 @@ def receive_data():
     # Check if the temperature is too high
     if data.get('temp') and data.get('temp') > 80:
         send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C)")
-    else:
-        send_telegram_notification(f"Temperature is normal ({data.get('temp')}°C)")
 
     if data.get('vrTemp') and data.get('vrTemp') > 70:
         send_telegram_notification(f"Warning: High VR temperature detected ({data.get('vrTemp')}°C)")
@@ -89,5 +97,9 @@ def receive_data():
         if reject_rate > 0.1:
             send_telegram_notification(f"Warning: High reject rate detected ({reject_rate:.2%})")
 
+    # Check if the current time is between 9:56 and 10:00
+    now = datetime.datetime.now()
+    if now.hour == 9 and 56 <= now.minute < 60:
+        send_telegram_notification("The miner is still running")
 
     return jsonify({'message': 'Data saved successfully'}), 200

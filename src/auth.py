@@ -59,3 +59,9 @@ def logout():
     """Logs out the user and redirects to the login page."""
     session.pop("logged_in", None)
     return redirect(url_for("auth.login"))
+
+
+# if path is "/" then redirect to "/login"
+@auth_bp.route('/')
+def redirect_to_login():
+    return redirect(url_for("auth.login"))
