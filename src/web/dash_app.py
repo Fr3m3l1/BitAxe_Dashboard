@@ -25,7 +25,7 @@ def init_dash_app(flask_app):
                 dbc.Card([
                     dbc.CardHeader("Timeframe"),
                     dbc.CardBody(
-                        dcc.Dropdown(
+                        [dcc.Dropdown(
                             id='timeframe-dropdown',
                             options=[
                                 {'label': '1 hour', 'value': 1},
@@ -36,7 +36,8 @@ def init_dash_app(flask_app):
                                 {'label': '7 days', 'value': 7*24}
                             ],
                             value=6
-                        )
+                        ),
+                        html.Div(id='average-overview', children="Calculating metrics...", className="mt-2")]
                     )
                 ], className="mb-4"),
                 width=4,
@@ -83,19 +84,45 @@ def init_dash_app(flask_app):
         dcc.Interval(id='interval-component', interval=60*1000, n_intervals=0)
     ], fluid=True)
 
+    # Callback für die Anzeige der durchschnittlichen Werte
+    @dash_app.callback(
+        Output('average-overview', 'children'),
+        [Input('interval-component', 'n_intervals'),
+            Input('timeframe-dropdown', 'value')]
+    )
+    def update_average_overview(n, timeframe):
+        data_array = get_historical_data(timeframe * 60)
+        if not data_array:
+            return "No data available."
+        if 'hashRate' not in data_array[0]:
+            return "Required data not available."
+        
+        hash_rate_array = []
+        for data in data_array:
+            hash_rate_raw = data['hashRate']
+            # Umrechnung in THashes pro Sekunde (1 GH/s = 1e9)
+            hash = hash_rate_raw / 1000
+            hash_rate_array.append(hash)
+        
+        # Berechnung des Durchschnitts der Hashrate
+        H = sum(hash_rate_array) / len(hash_rate_array)
+        return f"Average Hash Rate: {H:.2f} TH/s"
+
 
     @dash_app.callback(
     Output('performance-overview', 'children'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'),
+        Input('timeframe-dropdown', 'value')]
     )
-    def update_performance_overview(n):
-        data = get_latest_data()
-        if not data:
+    def update_performance_overview(n, timeframe):
+        data_array = get_historical_data(timeframe * 60)
+        if not data_array:
             return "No data available."
-        if 'bestSessionDiff' not in data or 'hashRate' not in data:
+        if 'bestSessionDiff' not in data_array[0] or 'hashRate' not in data_array[0]:
             return "Required data not available."
                 
-        best_session_diff = data['bestSessionDiff']
+
+        best_session_diff = data_array[-1]['bestSessionDiff']
         # convert to integer (80.8M -> 80800000)
         if best_session_diff[-1] == 'M':
             best_session_diff = float(best_session_diff[:-1]) * 1000000
@@ -107,22 +134,28 @@ def init_dash_app(flask_app):
             best_session_diff = -1
 
         # Get the first record from the database where the bestSessionDiff is equal to the bestSessionDiff of the latest record
-        query = f"SELECT * FROM miner_data WHERE bestSessionDiff = '{data['bestSessionDiff']}' ORDER BY id ASC LIMIT 1"
+        query = f"SELECT * FROM miner_data WHERE bestSessionDiff = '{data_array[-1]['bestSessionDiff']}' ORDER BY id ASC LIMIT 1"
         first_diff_record = do_db_request(query)
         # Get the timestamp of the first record
         time_first_record = first_diff_record[0][42]
 
         # calculate the time difference between the first and the latest record
-        time_last_record = data['timestamp']
+        time_last_record = data_array[-1]['timestamp']
         time_last_record_datetime = datetime.strptime(time_last_record, '%Y-%m-%d %H:%M:%S')
         time_first_record_datetime = datetime.strptime(time_first_record, '%Y-%m-%d %H:%M:%S')
 
         time_diff = time_last_record_datetime - time_first_record_datetime
         time_diff_seconds = time_diff.total_seconds()
 
-        hash_rate_raw = data['hashRate']       
-        # Umrechnung in Hashes pro Sekunde (1 GH/s = 1e9)
-        H = hash_rate_raw * 1e9
+        hash_rate_array = []
+        for data in data_array:
+            hash_rate_raw = data['hashRate']
+            # Umrechnung in Hashes pro Sekunde (1 GH/s = 1e9)
+            hash = hash_rate_raw * 1e9
+            hash_rate_array.append(hash)
+
+        # Berechnung des Durchschnitts der Hashrate
+        H = sum(hash_rate_array) / len(hash_rate_array)
         constant = 4294967296  # 2**32
 
         if best_session_diff <= 0:
@@ -155,9 +188,6 @@ def init_dash_app(flask_app):
 
         time_str_all = calculate_time_str(expected_time_seconds)
         time_str_difference = calculate_time_str(time_diff_seconds)
-
-
-        
         
         return html.Div([
             html.P(f"Chance für neue bestSessionDiff: {chance_per_day_str} pro Tag | {chance_per_month_str} pro Monat | {chance_per_year_str} pro Jahr"),

@@ -71,13 +71,13 @@ def get_latest_data():
             return dict(zip(columns, record))
     return {}
 
-def get_historical_data(timeframe=None):
+def get_historical_data(minutes=None):
     """Retrieves all miner data records from the database ordered by timestamp."""
     # get now in utc
     now = datetime.now(timezone.utc) 
 
-    if timeframe:
-        query = f"SELECT * FROM miner_data WHERE timestamp >= datetime('{now}', '-{timeframe} minutes') ORDER BY timestamp ASC"
+    if minutes:
+        query = f"SELECT * FROM miner_data WHERE timestamp >= datetime('{now}', '-{minutes} minutes') ORDER BY timestamp ASC"
     else:
         query = "SELECT * FROM miner_data ORDER BY timestamp ASC"
 

@@ -2,7 +2,6 @@ import sqlite3
 from flask import Blueprint, request, jsonify
 from db.database import DATABASE, get_latest_data
 from send.telegram_notification import send_telegram_notification
-import datetime
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -83,10 +82,10 @@ def receive_data():
         conn.commit()
 
     # Check if the temperature is too high
-    if data.get('temp') and data.get('temp') > 80:
+    if data.get('temp') and data.get('temp') > 65:
         send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C)")
 
-    if data.get('vrTemp') and data.get('vrTemp') > 70:
+    if data.get('vrTemp') and data.get('vrTemp') > 65:
         send_telegram_notification(f"Warning: High VR temperature detected ({data.get('vrTemp')}°C)")
 
     if data.get('isUsingFallbackStratum'):
@@ -94,12 +93,7 @@ def receive_data():
 
     if data.get('sharesRejected') and data.get('sharesAccepted'):
         reject_rate = data.get('sharesRejected') / (data.get('sharesRejected') + data.get('sharesAccepted'))
-        if reject_rate > 0.1:
+        if (reject_rate*100) > 0.5:
             send_telegram_notification(f"Warning: High reject rate detected ({reject_rate:.2%})")
-
-    # Check if the current time is between 9:56 and 10:00
-    now = datetime.datetime.now()
-    if now.hour == 9 and 56 <= now.minute < 60:
-        send_telegram_notification("The miner is still running")
 
     return jsonify({'message': 'Data saved successfully'}), 200
