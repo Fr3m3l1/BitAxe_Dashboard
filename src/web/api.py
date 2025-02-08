@@ -1,7 +1,7 @@
 import sqlite3
 from flask import Blueprint, request, jsonify
-from database import DATABASE, get_latest_data
-from telegram_notification import send_telegram_notification
+from db.database import DATABASE, get_latest_data
+from send.telegram_notification import send_telegram_notification
 import datetime
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')

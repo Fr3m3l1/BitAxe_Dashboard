@@ -2,7 +2,7 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 from dash.dependencies import Input, Output
-from database import get_latest_data, get_historical_data
+from db.database import get_latest_data, get_historical_data
 
 def init_dash_app(flask_app):
     dash_app = dash.Dash(

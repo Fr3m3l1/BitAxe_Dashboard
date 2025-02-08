@@ -1,10 +1,10 @@
 import os
 from flask import Flask, session, redirect, url_for, request
-from database import init_db
-from auth import auth_bp
-from api import api_bp
-from dashboard import dashboard_bp
-from dash_app import init_dash_app
+from db.database import init_db
+from web.auth import auth_bp
+from web.api import api_bp
+from web.dashboard import dashboard_bp
+from web.dash_app import init_dash_app
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "defaultsecret")
