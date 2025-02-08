@@ -91,6 +91,8 @@ def init_dash_app(flask_app):
             Input('timeframe-dropdown', 'value')]
     )
     def update_average_overview(n, timeframe):
+        if timeframe == None:
+            timeframe = 60
         data_array = get_historical_data(timeframe * 60)
         if not data_array:
             return "No data available."
@@ -115,6 +117,8 @@ def init_dash_app(flask_app):
         Input('timeframe-dropdown', 'value')]
     )
     def update_performance_overview(n, timeframe):
+        if timeframe == None:
+            timeframe = 60
         data_array = get_historical_data(timeframe * 60)
         if not data_array:
             return "No data available."
@@ -171,6 +175,14 @@ def init_dash_app(flask_app):
         chance_per_day = 86400 * chance_per_second
         chance_per_month = 30 * chance_per_day
         chance_per_year = 365 * chance_per_day
+        # if chance is higher than 1 (100%), set it to .9999
+        if chance_per_day > 0.99999:
+            chance_per_day = 0.9999
+        if chance_per_month > 1:
+            chance_per_month = 0.9999
+        if chance_per_year > 1:
+            chance_per_year = 0.9999
+
         # convert it to percentage
         chance_per_day_str = f"{chance_per_day:.2%}"
         chance_per_month_str = f"{chance_per_month:.2%}"
@@ -266,8 +278,9 @@ def init_dash_app(flask_app):
          Input('timeframe-dropdown', 'value')]
     )
     def update_temp_graph(n, timeframe):
-        timeframe_minutes = timeframe * 60  # Stunden in Minuten umrechnen
-        data = get_historical_data(timeframe_minutes)
+        if timeframe == None:
+            timeframe = 60
+        data = get_historical_data(timeframe * 60)
         if not data:
             return {"data": []}
         timestamps = [record['timestamp'] for record in data]
@@ -294,8 +307,9 @@ def init_dash_app(flask_app):
          Input('timeframe-dropdown', 'value')]
     )
     def update_hashrate_graph(n, timeframe):
-        timeframe_minutes = timeframe * 60  # Stunden in Minuten umrechnen
-        data = get_historical_data(timeframe_minutes)
+        if timeframe == None:
+            timeframe = 60
+        data = get_historical_data(timeframe * 60)
         if not data:
             return {"data": []}
         timestamps = [record['timestamp'] for record in data]

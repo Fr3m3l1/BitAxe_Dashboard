@@ -20,8 +20,11 @@ def receive_data():
     
     if last_data:
         # check if the last data has a lower bestDiff than the current data
-        if last_data['bestDiff'] > data.get('bestDiff'):
-            send_telegram_notification(f"CONGRATULATIONS! New best difficulty: {data.get('bestDiff')}")
+        last_difficulty = last_data['bestDiff']
+        current_difficulty = data.get('bestDiff')
+        if last_difficulty and current_difficulty and last_difficulty < current_difficulty:
+            send_telegram_notification(f"New best difficulty found: {current_difficulty}")
+
 
     with sqlite3.connect(DATABASE) as conn:
         c = conn.cursor()
