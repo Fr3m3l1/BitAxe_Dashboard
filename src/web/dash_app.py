@@ -5,7 +5,6 @@ from dash.dependencies import Input, Output, State
 from db.database import get_latest_data, get_historical_data, do_db_request
 from datetime import datetime, timedelta
 
-# Globale Variable zur Speicherung der letzten Daten-ID
 LAST_DATA_SAVE = None
 
 def init_dash_app(flask_app):
@@ -14,23 +13,33 @@ def init_dash_app(flask_app):
         server=flask_app,
         url_base_pathname='/dashboard/',
         suppress_callback_exceptions=True,
-        external_stylesheets=[dbc.themes.BOOTSTRAP]
+        external_stylesheets=[dbc.themes.DARKLY]
     )
     
     dash_app.layout = dbc.Container([
+        # Sticky Header Row
         dbc.Row([
-            dbc.Col(html.H1("Miner Dashboard"), width=6),
             dbc.Col(
                 html.Div([
-                    html.Div(id='refresh-countdown'),
-                    html.Div(id='data-countdown')
-                ], className="text-right")
+                    html.H1("Miner Dashboard", className="h4 mb-0"),  # Smaller heading for mobile
+                    html.Small("Real-time Mining Statistics", className="text-muted")
+                ], className="d-flex flex-column"), 
+                md=6, xs=12
             ),
-        ], className="mt-4"),
+            dbc.Col(
+                html.Div([
+                    html.Div(id='refresh-countdown', className="small"),
+                    html.Div(id='data-countdown', className="small")
+                ], className="text-right d-flex flex-column justify-content-center"),
+                md=6, xs=12
+            ),
+        ], className="sticky-top bg-dark text-white p-3 z-index-1030 shadow-sm"),
+        
+        # Main Content
         dbc.Row([
             dbc.Col(
                 dbc.Card([
-                    dbc.CardHeader("Timeframe"),
+                    dbc.CardHeader("Timeframe", className="py-2"),
                     dbc.CardBody([
                         dcc.Dropdown(
                             id='timeframe-dropdown',
@@ -42,57 +51,74 @@ def init_dash_app(flask_app):
                                 {'label': '3 days', 'value': 3*24},
                                 {'label': '7 days', 'value': 7*24}
                             ],
-                            value=6
+                            value=6,
+                            className="mb-2 text-dark"
                         ),
-                        html.Div(id='average-overview', children="Calculating metrics...", className="mt-2")
+                        html.Div(id='average-overview', children="Calculating metrics...", className="small")
                     ])
                 ], className="mb-4"),
-                width=4,
+                md=4, xs=12
             ),
             dbc.Col(
                 dbc.Card([
-                    dbc.CardHeader("Performance Overview"),
-                    dbc.CardBody(html.Div(id='performance-overview', children="Calculating metrics..."))
+                    dbc.CardHeader("Performance Overview", className="py-2"),
+                    dbc.CardBody(
+                        html.Div(id='performance-overview', children="Calculating metrics...", className="small")
+                    )
                 ], className="mb-4"),
-                width=8
+                md=8, xs=12
             ),
-        ]),
+        ], className="mt-4"),
+        
+        # Second Row
         dbc.Row([
             dbc.Col(
                 dbc.Card([
-                    dbc.CardHeader("Latest Data"),
-                    dbc.CardBody(html.Div(id='live-update', children="Loading data..."))
+                    dbc.CardHeader("Latest Data", className="py-2"),
+                    dbc.CardBody(
+                        html.Div(id='live-update', children="Loading data...", 
+                                style={'overflowX': 'auto'})
+                    )
                 ], className="mb-4"),
-                width=4
+                md=4, xs=12
             ),
             dbc.Col(
                 dbc.Card([
-                    dbc.CardHeader("Temperature over Time"),
+                    dbc.CardHeader("Temperature over Time", className="py-2"),
                     dbc.CardBody(dcc.Graph(id='temp-graph'))
                 ], className="mb-4"),
-                width=8
+                md=8, xs=12
             )
         ]),
-        dbc.Row(
+        
+        # Hash Rate Row
+        dbc.Row([
             dbc.Col(
                 dbc.Card([
-                    dbc.CardHeader("Hash Rate over Time"),
+                    dbc.CardHeader("Hash Rate over Time", className="py-2"),
                     dbc.CardBody(dcc.Graph(id='hashrate-graph'))
                 ], className="mb-4"),
                 width=12
             )
-        ),
+        ]),
+        
+        # Footer
         dbc.Row(
             dbc.Col(
-                html.Div(html.A("Logout", href="/logout", className="btn btn-secondary")),
-                className="text-center mb-4"
+                html.Div(
+                    html.A("Logout", href="/logout", 
+                          className="btn btn-outline-light btn-sm"),
+                    className="text-center mb-4"
+                )
             )
         ),
+        
+        # Update Components
         dcc.Interval(id='interval-component', interval=60*1000, n_intervals=0),
         dcc.Interval(id='countdown-interval', interval=1*1000, n_intervals=0),
         dcc.Store(id='last-refresh-time'),
         dcc.Store(id='last-data-recieved-time')
-    ], fluid=True)
+    ], fluid=True, className="vh-100")
 
     # Callback zur Speicherung der letzten Refresh-Zeit
     @dash_app.callback(
@@ -346,21 +372,22 @@ def init_dash_app(flask_app):
         table_body = html.Tbody([
             html.Tr([html.Td(key), html.Td(str(value))]) for key, value in data.items()
         ])
-        table = dbc.Table(
+
+        return dbc.Table(
             [table_header, table_body],
             bordered=True,
             hover=True,
             responsive=True,
             striped=True,
-            className="mb-0"
+            className="mb-0 small",
+            style={"minWidth": "350px"}
         )
-        return table
 
     # Callback zum Aktualisieren des Temperatur-Diagramms
     @dash_app.callback(
         Output('temp-graph', 'figure'),
         [Input('interval-component', 'n_intervals'),
-         Input('timeframe-dropdown', 'value')]
+        Input('timeframe-dropdown', 'value')]
     )
     def update_temp_graph(n, timeframe):
         if timeframe is None:
@@ -375,12 +402,45 @@ def init_dash_app(flask_app):
                 "x": timestamps,
                 "y": temps,
                 "type": "line",
-                "name": "Temperature"
+                "name": "Temperature",
+                "line": {"color": "#00bc8c"}
             }],
             "layout": {
-                "title": "Temperature over Time",
-                "xaxis": {"title": "Time"},
-                "yaxis": {"title": "Temperature (°C)"}
+                "template": "plotly_dark",
+                "title": {"text": "Temperature over Time", "font": {"size": 14}},
+                "xaxis": {
+                    "title": {
+                        "text": "Time",
+                        "font": {"color": "#ffffff", "size": 12}
+                    },
+                    "showline": True,
+                    "linewidth": 1,
+                    "linecolor": "#4a4a4a",
+                    "gridcolor": "#2a2a2a",
+                    "ticks": "outside",
+                    "tickfont": {"color": "#ffffff"},
+                    "title_standoff": 15,
+                    "automargin": True
+                },
+                "yaxis": {
+                    "title": {
+                        "text": "Temperature (°C)",
+                        "font": {"color": "#ffffff", "size": 12}
+                    },
+                    "showline": True,
+                    "linewidth": 1,
+                    "linecolor": "#4a4a4a",
+                    "gridcolor": "#2a2a2a",
+                    "ticks": "outside",
+                    "tickfont": {"color": "#ffffff"},
+                    "title_standoff": 20,
+                    "automargin": True
+                },
+                "margin": {"t": 40, "b": 50, "l": 70, "r": 30},
+                "hovermode": "x unified",
+                "plot_bgcolor": "rgba(0,0,0,0)",
+                "paper_bgcolor": "rgba(0,0,0,0)",
+                "font": {"color": "#ffffff"}
             }
         }
         return figure
@@ -389,7 +449,7 @@ def init_dash_app(flask_app):
     @dash_app.callback(
         Output('hashrate-graph', 'figure'),
         [Input('interval-component', 'n_intervals'),
-         Input('timeframe-dropdown', 'value')]
+        Input('timeframe-dropdown', 'value')]
     )
     def update_hashrate_graph(n, timeframe):
         if timeframe is None:
@@ -405,12 +465,45 @@ def init_dash_app(flask_app):
                 "x": timestamps,
                 "y": hashrates,
                 "type": "line",
-                "name": "Hash Rate"
+                "name": "Hash Rate",
+                "line": {"color": "#3498DB"}
             }],
             "layout": {
-                "title": "Hash Rate over Time",
-                "xaxis": {"title": "Time"},
-                "yaxis": {"title": "Hash Rate (TH/s)"}
+                "template": "plotly_dark",
+                "title": {"text": "Hash Rate over Time", "font": {"size": 14}},
+                "xaxis": {
+                    "title": {
+                        "text": "Time",
+                        "font": {"color": "#ffffff", "size": 12}
+                    },
+                    "showline": True,
+                    "linewidth": 1,
+                    "linecolor": "#4a4a4a",
+                    "gridcolor": "#2a2a4a",
+                    "ticks": "outside",
+                    "tickfont": {"color": "#ffffff"},
+                    "title_standoff": 15,
+                    "automargin": True
+                },
+                "yaxis": {
+                    "title": {
+                        "text": "Hash Rate (TH/s)",
+                        "font": {"color": "#ffffff", "size": 12}
+                    },
+                    "showline": True,
+                    "linewidth": 1,
+                    "linecolor": "#4a4a4a",
+                    "gridcolor": "#2a2a4a",
+                    "ticks": "outside",
+                    "tickfont": {"color": "#ffffff"},
+                    "title_standoff": 20,
+                    "automargin": True
+                },
+                "margin": {"t": 40, "b": 50, "l": 70, "r": 30},
+                "hovermode": "x unified",
+                "plot_bgcolor": "rgba(0,0,0,0)",
+                "paper_bgcolor": "rgba(0,0,0,0)",
+                "font": {"color": "#ffffff"}
             }
         }
         return figure
