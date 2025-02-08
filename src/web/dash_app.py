@@ -98,7 +98,6 @@ def init_dash_app(flask_app):
     @dash_app.callback(
         Output('last-refresh-time', 'data'),
         [Input('interval-component', 'n_intervals')],
-        prevent_initial_call=True
     )
     def update_last_refresh_time(n):
         return datetime.now().timestamp()
@@ -120,7 +119,7 @@ def init_dash_app(flask_app):
         
         if LAST_DATA_SAVE is None or last_data_id != LAST_DATA_SAVE:
             LAST_DATA_SAVE = last_data_id
-            return current_time.replace(second=0, microsecond=0).timestamp()
+            return current_time.timestamp()
         
         return stored_time if stored_time is not None else current_time.timestamp()
 
@@ -137,25 +136,29 @@ def init_dash_app(flask_app):
             
         # Page refresh countdown
         page_countdown = "Next page refresh in: --:--"
-        if last_refresh_time is not None:
-            last_refresh = datetime.fromtimestamp(last_refresh_time)
-            elapsed = (current_time - last_refresh).total_seconds()
-            remaining_page = max(60 - elapsed, 0)
-            minutes = int(remaining_page // 60)
-            seconds = int(remaining_page % 60)
-            page_countdown = f"Next page refresh in: {minutes:02}:{seconds:02}"
-        
+        if last_refresh_time is None:
+            last_refresh_time = current_time.timestamp()
+
+        last_refresh = datetime.fromtimestamp(last_refresh_time)
+        elapsed = (current_time - last_refresh).total_seconds()
+        remaining_page = max(60 - elapsed, 0)
+        minutes = int(remaining_page // 60)
+        seconds = int(remaining_page % 60)
+        page_countdown = f"Next page refresh in: {minutes:02}:{seconds:02}"
+    
         # Data refresh countdown: Falls kein Zeitstempel vorliegt, verwende current_time
         if last_data_recieved_time is None:
             last_data_dt = current_time
         else:
             last_data_dt = datetime.fromtimestamp(last_data_recieved_time)
         
-        # Add 5 minutes to the last received data time
-        next_data_time = last_data_dt + timedelta(minutes=5)
+        # Calculate next expected data time based on 5-minute intervals
+        interval_seconds = 5 * 60
+        delta = current_time - last_data_dt
+        intervals_passed = int(delta.total_seconds() // interval_seconds)
+        next_data_time = last_data_dt + timedelta(seconds=interval_seconds * (intervals_passed + 1))
         remaining_data = (next_data_time - current_time).total_seconds()
-        remaining_data = max(remaining_data, 0)  # Prevent negative countdown
-
+        
         data_minutes = int(remaining_data // 60)
         data_seconds = int(remaining_data % 60)
         data_countdown = f"Next expected data in: {data_minutes:02}:{data_seconds:02}"
@@ -265,16 +268,27 @@ def init_dash_app(flask_app):
                 return f"{seconds/60:.2f} Minuten"
             elif seconds < 86400:
                 return f"{seconds/3600:.2f} Stunden"
-            else:
+            elif seconds < 2592000:
                 return f"{seconds/86400:.2f} Tage"
+            elif seconds < 31536000:
+                return f"{seconds/2592000:.2f} Monate"
+            else:
+                return f"{seconds/31536000:.2f} Jahre"
+            
 
         time_str_all = calculate_time_str(expected_time_seconds)
-        time_str_difference = calculate_time_str(time_diff_seconds)
+        time_str_past = calculate_time_str(time_diff_seconds)
+        if time_diff_seconds < expected_time_seconds:
+            time_str_difference = calculate_time_str(expected_time_seconds - time_diff_seconds)
+            future = "in"
+        else:
+            time_str_difference = calculate_time_str(time_diff_seconds - expected_time_seconds)
+            future = "vor"
         
         return html.Div([
-            html.P(f"Chance fuer neue bestSessionDiff: {chance_per_day_str} pro Tag | {chance_per_month_str} pro Monat | {chance_per_year_str} pro Jahr"),
-            html.P(f"Erwartete Zeit, um bestSessionDiff zu ueberschreiten: {time_str_all}"),
-            html.P(f"Zeit seit dem letzten Durchbruch: {time_str_difference}")
+            html.P(f"Chance für neue bestSessionDiff: {chance_per_day_str} pro Tag | {chance_per_month_str} pro Monat | {chance_per_year_str} pro Jahr"),
+            html.P(f"Erwartete Zeit, um bestSessionDiff zu überschreiten: {time_str_all} ({future}: {time_str_difference})"),
+            html.P(f"Zeit seit dem letzten Durchbruch: {time_str_past}")
         ])
 
     # Callback zur Anzeige der aktuellen Daten in einer Tabelle
