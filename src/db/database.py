@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from datetime import datetime, timezone
 
 # Create "db" folder and define database path
 DB_FOLDER = "db"
@@ -70,13 +71,31 @@ def get_latest_data():
             return dict(zip(columns, record))
     return {}
 
-def get_historical_data():
+def get_historical_data(timeframe=None):
     """Retrieves all miner data records from the database ordered by timestamp."""
-    import sqlite3
+    # get now in utc
+    now = datetime.now(timezone.utc) 
+
+    if timeframe:
+        query = f"SELECT * FROM miner_data WHERE timestamp >= datetime('{now}', '-{timeframe} minutes') ORDER BY timestamp ASC"
+    else:
+        query = "SELECT * FROM miner_data ORDER BY timestamp ASC"
+
     with sqlite3.connect(DATABASE) as conn:
         c = conn.cursor()
-        c.execute("SELECT * FROM miner_data ORDER BY timestamp ASC")
+        c.execute(query)
         records = c.fetchall()
         columns = [desc[0] for desc in c.description]
         return [dict(zip(columns, record)) for record in records]
 
+
+def do_db_request(query, values=None):
+    """Executes a database query and returns the result."""
+    with sqlite3.connect(DATABASE) as conn:
+        c = conn.cursor()
+        if values:
+            c.execute(query, values)
+        else:
+            c.execute(query)
+        conn.commit()
+        return c.fetchall()
