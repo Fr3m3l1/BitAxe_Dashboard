@@ -21,9 +21,13 @@ def receive_data():
     if last_data:
         # check if the last data has a lower bestDiff than the current data
         last_difficulty = last_data['bestDiff']
+        last_session_difficulty = last_data['bestSessionDiff']
         current_difficulty = data.get('bestDiff')
+        current_session_difficulty = data.get('bestSessionDiff')
         if last_difficulty and current_difficulty and last_difficulty < current_difficulty:
-            send_telegram_notification(f"New best difficulty found: {current_difficulty}")
+            send_telegram_notification(f"New best OVERALL difficulty found: {current_difficulty}")
+        if last_session_difficulty and current_session_difficulty and last_session_difficulty < current_session_difficulty:
+            send_telegram_notification(f"New best SESSION difficulty found: {current_session_difficulty}")
 
 
     with sqlite3.connect(DATABASE) as conn:

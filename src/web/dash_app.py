@@ -207,7 +207,9 @@ def init_dash_app(flask_app):
         
         best_session_diff = data_array[-1]['bestSessionDiff']
         # Umrechnung in Integer (z. B. "80.8M" -> 80800000)
-        if best_session_diff[-1] == 'M':
+        if best_session_diff[-1] == 'k':
+            best_session_diff = float(best_session_diff[:-1]) * 1000
+        elif best_session_diff[-1] == 'M':
             best_session_diff = float(best_session_diff[:-1]) * 1000000
         elif best_session_diff[-1] == 'G':
             best_session_diff = float(best_session_diff[:-1]) * 1000000000
@@ -326,9 +328,13 @@ def init_dash_app(flask_app):
         minutes = uptime // 60
         data['uptime'] = f"{days} days, {hours} hours, {minutes} minutes"
 
+        data['rejectionRate'] = "N/A"
         if data['sharesRejected'] and data['sharesAccepted']:
-            reject_rate = data['sharesRejected'] / (data['sharesRejected'] + data['sharesAccepted'])
-            reject_rate = round(reject_rate, 4)
+            if data['sharesRejected'] == 0:
+                reject_rate = 0
+            else:
+                reject_rate = data['sharesRejected'] / (data['sharesRejected'] + data['sharesAccepted'])
+                reject_rate = round(reject_rate, 4)
             data['rejectionRate'] = f"{reject_rate:.2%}"
         
         fields = ['id', 'power', 'temp', 'vrTemp', 'hashRate', 'bestDiff', 'bestSessionDiff', 'sharesAccepted', 'sharesRejected', 'rejectionRate', 'uptime', 'timestamp']
