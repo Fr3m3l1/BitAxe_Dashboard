@@ -24,10 +24,11 @@ def receive_data():
         last_session_difficulty = last_data['bestSessionDiff']
         current_difficulty = data.get('bestDiff')
         current_session_difficulty = data.get('bestSessionDiff')
-        if last_difficulty and current_difficulty and last_difficulty < current_difficulty:
+        if last_difficulty < current_difficulty:
             send_telegram_notification(f"New best OVERALL difficulty found: {current_difficulty}")
-        if last_session_difficulty and current_session_difficulty and last_session_difficulty < current_session_difficulty:
-            send_telegram_notification(f"New best SESSION difficulty found: {current_session_difficulty}")
+        else:
+            if last_session_difficulty < current_session_difficulty:
+                send_telegram_notification(f"New best SESSION difficulty found: {current_session_difficulty}")
 
 
     with sqlite3.connect(DATABASE) as conn:
@@ -92,7 +93,7 @@ def receive_data():
     if data.get('temp') and data.get('temp') > 65:
         send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C)")
 
-    if data.get('vrTemp') and data.get('vrTemp') > 65:
+    if data.get('vrTemp') and data.get('vrTemp') > 70:
         send_telegram_notification(f"Warning: High VR temperature detected ({data.get('vrTemp')}°C)")
 
     if data.get('isUsingFallbackStratum'):
