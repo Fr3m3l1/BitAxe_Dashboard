@@ -93,7 +93,7 @@ def receive_data():
     if data.get('temp') and data.get('temp') > 65:
         send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C)")
 
-    if data.get('vrTemp') and data.get('vrTemp') > 70:
+    if data.get('vrTemp') and data.get('vrTemp') > 75:
         send_telegram_notification(f"Warning: High VR temperature detected ({data.get('vrTemp')}°C)")
 
     if data.get('isUsingFallbackStratum'):

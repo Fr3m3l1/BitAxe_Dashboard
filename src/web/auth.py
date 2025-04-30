@@ -1,5 +1,6 @@
 import os
 from flask import Blueprint, render_template_string, request, redirect, url_for, session, flash
+from send.telegram_notification import send_telegram_notification
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -65,3 +66,16 @@ def logout():
 @auth_bp.route('/')
 def redirect_to_login():
     return redirect(url_for("auth.login"))
+
+@auth_bp.route('/check_tg_token')
+def check_tg_token():
+    """
+    Checks if the Telegram token and chat ID are set in the environment variables.
+    If not, it returns a message indicating that the notification is skipped.
+    """
+    token = os.environ.get("TELEGRAM_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return "Telegram notification skipped: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set."
+    
+    send_telegram_notification("Telegram notification test: Token and Chat ID are set.")
