@@ -79,3 +79,5 @@ def check_tg_token():
         return "Telegram notification skipped: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set."
     
     send_telegram_notification("Telegram notification test: Token and Chat ID are set.")
+
+    return redirect(url_for("auth.login"))
