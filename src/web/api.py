@@ -93,11 +93,14 @@ def receive_data():
     if data.get('temp') and data.get('temp') > 65:
         send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C)")
 
-    if data.get('vrTemp') and data.get('vrTemp') > 75:
+    if data.get('vrTemp') and data.get('vrTemp') > 78:
         send_telegram_notification(f"Warning: High VR temperature detected ({data.get('vrTemp')}°C)")
 
-    if data.get('isUsingFallbackStratum'):
+    if data.get('isUsingFallbackStratum') and last_data.get('isUsingFallbackStratum') == 0:
         send_telegram_notification("Warning: Using fallback stratum")
+    else :
+        if data.get('isUsingFallbackStratum') == 0 and last_data.get('isUsingFallbackStratum') == 1:
+            send_telegram_notification("Warning: No longer using fallback stratum")
 
     if data.get('sharesRejected') and data.get('sharesAccepted'):
         reject_rate = data.get('sharesRejected') / (data.get('sharesRejected') + data.get('sharesAccepted'))

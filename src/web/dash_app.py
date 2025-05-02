@@ -102,6 +102,30 @@ def init_dash_app(flask_app):
             )
         ]),
         
+        # Custom Graph Row
+        dbc.Row([
+            dbc.Col(
+                dbc.Card([
+                    dbc.CardHeader("Custom Variable Graph", className="py-2"),
+                    dbc.CardBody([
+                        dbc.Row([
+                            dbc.Col([
+                                html.Label("Select Variable", className="mr-2"),
+                                dcc.Dropdown(
+                                    id='variable-dropdown',
+                                    options=[],  # Will be populated by callback
+                                    value=None,
+                                    className="mb-2 text-dark"
+                                )
+                            ], md=4, xs=12)
+                        ], className="mb-3"),
+                        dcc.Graph(id='custom-graph')
+                    ])
+                ], className="mb-4"),
+                width=12
+            )
+        ]),
+        
         # Footer
         dbc.Row(
             dbc.Col(
@@ -117,7 +141,8 @@ def init_dash_app(flask_app):
         dcc.Interval(id='interval-component', interval=60*1000, n_intervals=0),
         dcc.Interval(id='countdown-interval', interval=1*1000, n_intervals=0),
         dcc.Store(id='last-refresh-time'),
-        dcc.Store(id='last-data-recieved-time')
+        dcc.Store(id='last-data-recieved-time'),
+        dcc.Store(id='numeric-variables', data=[])
     ], fluid=True, className="vh-100")
 
     # Callback zur Speicherung der letzten Refresh-Zeit
@@ -206,6 +231,23 @@ def init_dash_app(flask_app):
         if 'hashRate' not in data_array[0]:
             return "Required data not available."
         
+        hashrates = [record['hashRate'] for record in data_array]
+        hashrates_th = [rate / 1000 for rate in hashrates]  # Convert to TH/s
+        
+        # Calculate J/TH (Joules per Terahash)
+        powers = [record['power'] for record in data_array]
+        j_th_values = []
+        for i in range(len(powers)):
+            if hashrates_th[i] > 0:
+                j_th = powers[i] / hashrates_th[i]
+                j_th_values.append(j_th)
+            else:
+                j_th_values.append(None)
+        
+        # Calculate mean J/TH
+        valid_j_th = [j for j in j_th_values if j is not None]
+        mean_j_th = sum(valid_j_th) / len(valid_j_th) if valid_j_th else 0
+        
         hash_rate_array = []
         for data in data_array:
             hash_rate_raw = data['hashRate']
@@ -214,7 +256,10 @@ def init_dash_app(flask_app):
             hash_rate_array.append(hash_value)
         
         H = sum(hash_rate_array) / len(hash_rate_array)
-        return f"Average Hash Rate: {H:.2f} TH/s"
+        return html.Div([
+                html.P(f"Average Hash Rate: {H:.2f} TH/s"),
+                html.P(f"Mean Efficiency: {mean_j_th:.2f} J/TH")
+            ])
 
     # Callback zur Anzeige der Performance-Übersicht
     @dash_app.callback(
@@ -397,14 +442,24 @@ def init_dash_app(flask_app):
             return {"data": []}
         timestamps = [record['timestamp'] for record in data]
         temps = [record['temp'] for record in data]
+        vr_temps = [record['vrTemp'] for record in data]
         figure = {
-            "data": [{
-                "x": timestamps,
-                "y": temps,
-                "type": "line",
-                "name": "Temperature",
-                "line": {"color": "#00bc8c"}
-            }],
+            "data": [
+                {
+                    "x": timestamps,
+                    "y": temps,
+                    "type": "line",
+                    "name": "Temperature",
+                    "line": {"color": "#00bc8c"}
+                },
+                {
+                    "x": timestamps,
+                    "y": vr_temps,
+                    "type": "line",
+                    "name": "VR Temperature",
+                    "line": {"color": "#E74C3C"}
+                }
+            ],
             "layout": {
                 "template": "plotly_dark",
                 "title": {"text": "Temperature over Time", "font": {"size": 14}},
@@ -440,7 +495,8 @@ def init_dash_app(flask_app):
                 "hovermode": "x unified",
                 "plot_bgcolor": "rgba(0,0,0,0)",
                 "paper_bgcolor": "rgba(0,0,0,0)",
-                "font": {"color": "#ffffff"}
+                "font": {"color": "#ffffff"},
+                "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1}
             }
         }
         return figure
@@ -457,13 +513,15 @@ def init_dash_app(flask_app):
         data = get_historical_data(timeframe * 60)
         if not data:
             return {"data": []}
+        
         timestamps = [record['timestamp'] for record in data]
         hashrates = [record['hashRate'] for record in data]
-        hashrates = [rate / 1000 for rate in hashrates]
+        hashrates_th = [rate / 1000 for rate in hashrates]  # Convert to TH/s
+        
         figure = {
             "data": [{
                 "x": timestamps,
-                "y": hashrates,
+                "y": hashrates_th,
                 "type": "line",
                 "name": "Hash Rate",
                 "line": {"color": "#3498DB"}
@@ -503,9 +561,158 @@ def init_dash_app(flask_app):
                 "hovermode": "x unified",
                 "plot_bgcolor": "rgba(0,0,0,0)",
                 "paper_bgcolor": "rgba(0,0,0,0)",
-                "font": {"color": "#ffffff"}
+                "font": {"color": "#ffffff"},
             }
         }
         return figure
 
+    # Callback to populate the variable dropdown with numeric fields
+    @dash_app.callback(
+        [Output('variable-dropdown', 'options'),
+         Output('numeric-variables', 'data')],
+        [Input('interval-component', 'n_intervals')]
+    )
+    def update_variable_dropdown(n):
+        data = get_latest_data()
+        if not data:
+            return [], []
+        
+        # Define numeric fields to include in the dropdown
+        numeric_fields = [
+            'power', 'voltage', 'current', 'temp', 'vrTemp', 'hashRate',
+            'stratumDiff', 'freeHeap', 'coreVoltage', 'coreVoltageActual',
+            'frequency', 'sharesAccepted', 'sharesRejected', 'uptimeSeconds',
+            'asicCount', 'smallCoreCount', 'fanspeed', 'fanrpm'
+        ]
+        
+        # Filter to only include fields that exist in the data and have numeric values
+        available_fields = []
+        for field in numeric_fields:
+            if field in data and data[field] is not None:
+                try:
+                    float(data[field])  # Check if value can be converted to float
+                    available_fields.append(field)
+                except (ValueError, TypeError):
+                    pass
+        
+        options = [{'label': field, 'value': field} for field in available_fields]
+        return options, available_fields
+    
+    # Callback to update the custom graph based on selected variable
+    @dash_app.callback(
+        Output('custom-graph', 'figure'),
+        [Input('variable-dropdown', 'value'),
+         Input('timeframe-dropdown', 'value'),
+         Input('interval-component', 'n_intervals')]
+    )
+    def update_custom_graph(selected_variable, timeframe, n):
+        if selected_variable is None:
+            return {
+                "data": [],
+                "layout": {
+                    "template": "plotly_dark",
+                    "title": {"text": "Select a variable to display", "font": {"size": 14}},
+                    "plot_bgcolor": "rgba(0,0,0,0)",
+                    "paper_bgcolor": "rgba(0,0,0,0)",
+                    "font": {"color": "#ffffff"}
+                }
+            }
+        
+        if timeframe is None:
+            timeframe = 60
+            
+        data = get_historical_data(timeframe * 60)
+        if not data:
+            return {"data": []}
+        
+        timestamps = [record['timestamp'] for record in data]
+        values = []
+        
+        # Extract values for the selected variable
+        for record in data:
+            if selected_variable in record and record[selected_variable] is not None:
+                try:
+                    values.append(float(record[selected_variable]))
+                except (ValueError, TypeError):
+                    values.append(None)
+            else:
+                values.append(None)
+        
+        # Determine appropriate units and formatting based on the variable
+        units = ""
+        if selected_variable == 'temp' or selected_variable == 'vrTemp':
+            units = "°C"
+        elif selected_variable == 'power':
+            units = "W"
+        elif selected_variable == 'voltage' or selected_variable == 'coreVoltage' or selected_variable == 'coreVoltageActual':
+            units = "V"
+        elif selected_variable == 'current':
+            units = "A"
+        elif selected_variable == 'hashRate':
+            units = "TH/s"
+            values = [v / 1000 if v is not None else None for v in values]  # Convert to TH/s
+        elif selected_variable == 'frequency':
+            units = "MHz"
+        
+        # Calculate mean value for display
+        valid_values = [v for v in values if v is not None]
+        mean_value = sum(valid_values) / len(valid_values) if valid_values else 0
+        
+        # Choose a color based on the variable type
+        color_map = {
+            'temp': "#00bc8c",
+            'vrTemp': "#E74C3C",
+            'hashRate': "#3498DB",
+            'power': "#F39C12",
+        }
+        color = color_map.get(selected_variable, "#9B59B6")  # Default purple for other variables
+        
+        figure = {
+            "data": [{
+                "x": timestamps,
+                "y": values,
+                "type": "line",
+                "name": selected_variable,
+                "line": {"color": color}
+            }],
+            "layout": {
+                "template": "plotly_dark",
+                "title": {"text": f"{selected_variable} over Time (Mean: {mean_value:.2f} {units})", "font": {"size": 14}},
+                "xaxis": {
+                    "title": {
+                        "text": "Time",
+                        "font": {"color": "#ffffff", "size": 12}
+                    },
+                    "showline": True,
+                    "linewidth": 1,
+                    "linecolor": "#4a4a4a",
+                    "gridcolor": "#2a2a4a",
+                    "ticks": "outside",
+                    "tickfont": {"color": "#ffffff"},
+                    "title_standoff": 15,
+                    "automargin": True
+                },
+                "yaxis": {
+                    "title": {
+                        "text": f"{selected_variable} ({units})",
+                        "font": {"color": "#ffffff", "size": 12}
+                    },
+                    "showline": True,
+                    "linewidth": 1,
+                    "linecolor": "#4a4a4a",
+                    "gridcolor": "#2a2a4a",
+                    "ticks": "outside",
+                    "tickfont": {"color": "#ffffff"},
+                    "title_standoff": 20,
+                    "automargin": True
+                },
+                "margin": {"t": 40, "b": 50, "l": 70, "r": 30},
+                "hovermode": "x unified",
+                "plot_bgcolor": "rgba(0,0,0,0)",
+                "paper_bgcolor": "rgba(0,0,0,0)",
+                "font": {"color": "#ffffff"}
+            }
+        }
+        return figure
+    
     return dash_app
