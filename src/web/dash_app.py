@@ -2,7 +2,7 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
-from db.database import get_latest_data, get_historical_data, do_db_request
+from db.database import get_latest_data, get_historical_data, do_db_request, get_settings, update_settings
 from datetime import datetime, timedelta
 
 LAST_DATA_SAVE = None
@@ -126,14 +126,97 @@ def init_dash_app(flask_app):
             )
         ]),
         
+        # Settings Card
+        dbc.Row([
+            dbc.Col(
+                dbc.Card([
+                    dbc.CardHeader("Settings", className="py-2"),
+                    dbc.CardBody([
+                        html.H5("Alarm Settings", className="mb-3"),
+                        
+                        # Temperature Settings
+                        dbc.Row([
+                            dbc.Col([
+                                html.Label("Temperature Alarm Limit (°C):", className="mr-2"),
+                                dbc.Input(
+                                    id='temp-limit-input',
+                                    type='number',
+                                    min=40,
+                                    max=100,
+                                    step=0.5,
+                                    value=66.0,  # Default value, will be updated by callback
+                                    className="mb-2"
+                                )
+                            ], md=6, xs=12),
+                            
+                            dbc.Col([
+                                html.Label("VR Temperature Alarm Limit (°C):", className="mr-2"),
+                                dbc.Input(
+                                    id='vr-temp-limit-input',
+                                    type='number',
+                                    min=40,
+                                    max=100,
+                                    step=0.5,
+                                    value=78.0,  # Default value, will be updated by callback
+                                    className="mb-2"
+                                )
+                            ], md=6, xs=12)
+                        ], className="mb-3"),
+                        
+                        # Shares Rejection Rate Setting
+                        dbc.Row([
+                            dbc.Col([
+                                html.Label("Shares Rejection Rate Alarm Limit (%):", className="mr-2"),
+                                dbc.Input(
+                                    id='shares-reject-limit-input',
+                                    type='number',
+                                    min=0.1,
+                                    max=10,
+                                    step=0.1,
+                                    value=0.5,  # Default value, will be updated by callback
+                                    className="mb-2"
+                                )
+                            ], md=6, xs=12),
+                            
+                            dbc.Col([
+                                html.Label("Offline Alarm:", className="mr-2"),
+                                dbc.Checklist(
+                                    id='offline-alarm-toggle',
+                                    options=[
+                                        {'label': 'Enable Offline Alarm', 'value': 1}
+                                    ],
+                                    value=[1],  # Default value, will be updated by callback
+                                    switch=True,
+                                    className="mb-2"
+                                )
+                            ], md=6, xs=12)
+                        ], className="mb-3"),
+                        
+                        # Save Button
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Button(
+                                    "Save Settings",
+                                    id='save-settings-button',
+                                    color="primary",
+                                    className="mt-2"
+                                ),
+                                html.Div(id='settings-save-result', className="mt-2")
+                            ], className="text-center")
+                        ])
+                    ])
+                ], className="mb-4"),
+                width=12
+            )
+        ]),
+        
         # Footer
         dbc.Row(
             dbc.Col(
-                html.Div(
+                html.Div([
                     html.A("Logout", href="/logout", 
                           className="btn btn-outline-light btn-sm"),
-                    className="text-center mb-4"
-                )
+                ], className="text-center mb-4")
             )
         ),
         
@@ -142,8 +225,57 @@ def init_dash_app(flask_app):
         dcc.Interval(id='countdown-interval', interval=1*1000, n_intervals=0),
         dcc.Store(id='last-refresh-time'),
         dcc.Store(id='last-data-recieved-time'),
-        dcc.Store(id='numeric-variables', data=[])
+        dcc.Store(id='numeric-variables', data=[]),
+        dcc.Store(id='settings-store', data={})
     ], fluid=True, className="vh-100")
+    
+    # Callback to load settings
+    @dash_app.callback(
+        [Output('settings-store', 'data'),
+         Output('temp-limit-input', 'value'),
+         Output('vr-temp-limit-input', 'value'),
+         Output('shares-reject-limit-input', 'value'),
+         Output('offline-alarm-toggle', 'value')],
+        [Input('interval-component', 'n_intervals')]
+    )
+    def load_settings(n):
+        settings = get_settings()
+        temp_limit = settings.get('temp_limit', 66.0)
+        vr_temp_limit = settings.get('vr_temp_limit', 78.0)
+        shares_reject_limit = settings.get('shares_reject_limit', 0.5)
+        offline_alarm_enabled = settings.get('offline_alarm_enabled', 1)
+        
+        # For the checklist, we need to provide a list of values
+        offline_alarm_value = [1] if offline_alarm_enabled else []
+        
+        return settings, temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_value
+    
+    # Callback to save settings
+    @dash_app.callback(
+        Output('settings-save-result', 'children'),
+        [Input('save-settings-button', 'n_clicks')],
+        [State('temp-limit-input', 'value'),
+         State('vr-temp-limit-input', 'value'),
+         State('shares-reject-limit-input', 'value'),
+         State('offline-alarm-toggle', 'value')]
+    )
+    def save_settings(n_clicks, temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled):
+        if n_clicks is None:
+            return ""
+        
+        # Convert the checklist value to an integer (0 or 1)
+        offline_alarm_value = 1 if offline_alarm_enabled and 1 in offline_alarm_enabled else 0
+        
+        try:
+            update_settings(
+                float(temp_limit),
+                float(vr_temp_limit),
+                float(shares_reject_limit) / 100,  # Convert from percentage to decimal
+                offline_alarm_value
+            )
+            return html.Div("Settings saved successfully!", className="text-success")
+        except Exception as e:
+            return html.Div(f"Error saving settings: {str(e)}", className="text-danger")
 
     # Callback zur Speicherung der letzten Refresh-Zeit
     @dash_app.callback(

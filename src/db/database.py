@@ -8,7 +8,7 @@ os.makedirs(DB_FOLDER, exist_ok=True)
 DATABASE = os.path.join(DB_FOLDER, "miner_data.db")
 
 def init_db():
-    """Initializes the SQLite database and creates the table if it does not exist."""
+    """Initializes the SQLite database and creates the tables if they do not exist."""
     with sqlite3.connect(DATABASE) as conn:
         c = conn.cursor()
         c.execute('''
@@ -59,6 +59,58 @@ def init_db():
             )
         ''')
         conn.commit()
+        
+        # Create settings table if it doesn't exist
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY,
+                temp_limit REAL DEFAULT 66.0,
+                vr_temp_limit REAL DEFAULT 78.0,
+                shares_reject_limit REAL DEFAULT 0.5,
+                offline_alarm_enabled INTEGER DEFAULT 1
+            )
+        ''')
+        conn.commit()
+        
+        # Insert default settings if none exist
+        c.execute("SELECT COUNT(*) FROM settings")
+        if c.fetchone()[0] == 0:
+            c.execute('''
+                INSERT INTO settings (temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled)
+                VALUES (65.0, 75.0, 1, 1)
+            ''')
+            conn.commit()
+
+def get_settings():
+    """Retrieves the current settings from the settings table."""
+    with sqlite3.connect(DATABASE) as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM settings ORDER BY id DESC LIMIT 1")
+        record = c.fetchone()
+        if record:
+            columns = [desc[0] for desc in c.description]
+            return dict(zip(columns, record))
+    return {
+        'temp_limit': 66.0,
+        'vr_temp_limit': 78.0,
+        'shares_reject_limit': 0.5,
+        'offline_alarm_enabled': 1
+    }
+
+def update_settings(temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled):
+    """Updates the settings in the settings table."""
+    with sqlite3.connect(DATABASE) as conn:
+        c = conn.cursor()
+        c.execute('''
+            UPDATE settings
+            SET temp_limit = ?,
+                vr_temp_limit = ?,
+                shares_reject_limit = ?,
+                offline_alarm_enabled = ?
+            WHERE id = (SELECT id FROM settings ORDER BY id DESC LIMIT 1)
+        ''', (temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled))
+        conn.commit()
+        return True
 
 def get_latest_data():
     """Retrieves the most recent record from the miner_data table."""

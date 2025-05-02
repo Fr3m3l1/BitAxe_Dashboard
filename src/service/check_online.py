@@ -1,11 +1,15 @@
 from datetime import timezone, datetime
 
-from db.database import get_latest_data
+from db.database import get_latest_data, get_settings
 from send.telegram_notification import send_telegram_notification
 
 def check_miner_status():
     "Check if the last data got sent within the last 30min"
     last_data = get_latest_data()
+    settings = get_settings()
+    
+    # Check if offline alarm is enabled
+    offline_alarm_enabled = settings.get('offline_alarm_enabled', 1)
 
     if last_data:
         last_timestamp = datetime.fromisoformat(last_data['timestamp'])
@@ -16,10 +20,16 @@ def check_miner_status():
         now = datetime.now(timezone.utc)
         print(f"Now: {now}")
         if (now - last_timestamp).seconds > 1800:
-            send_telegram_notification("Miner is offline!")
+            if offline_alarm_enabled:
+                send_telegram_notification("Miner is offline!")
+            else:
+                print("Miner is offline, but offline alarm is disabled.")
             return False
     else:
-        send_telegram_notification("No data in the database!")
+        if offline_alarm_enabled:
+            send_telegram_notification("No data in the database!")
+        else:
+            print("No data in the database, but offline alarm is disabled.")
         return False
     
     return True

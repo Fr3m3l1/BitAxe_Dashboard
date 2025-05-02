@@ -1,6 +1,6 @@
 import sqlite3
 from flask import Blueprint, request, jsonify
-from db.database import DATABASE, get_latest_data
+from db.database import DATABASE, get_latest_data, get_settings
 from send.telegram_notification import send_telegram_notification
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
@@ -89,12 +89,18 @@ def receive_data():
         ))
         conn.commit()
 
+    # Get current settings
+    settings = get_settings()
+    temp_limit = settings.get('temp_limit', 66.0)
+    vr_temp_limit = settings.get('vr_temp_limit', 78.0)
+    shares_reject_limit = settings.get('shares_reject_limit', 0.5)
+    
     # Check if the temperature is too high
-    if data.get('temp') and data.get('temp') > 66:
-        send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C)")
+    if data.get('temp') and data.get('temp') > temp_limit:
+        send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C, limit: {temp_limit}°C)")
 
-    if data.get('vrTemp') and data.get('vrTemp') > 78:
-        send_telegram_notification(f"Warning: High VR temperature detected ({data.get('vrTemp')}°C)")
+    if data.get('vrTemp') and data.get('vrTemp') > vr_temp_limit:
+        send_telegram_notification(f"Warning: High VR temperature detected ({data.get('vrTemp')}°C, limit: {vr_temp_limit}°C)")
 
     if data.get('isUsingFallbackStratum') and last_data.get('isUsingFallbackStratum') == 0:
         send_telegram_notification("Warning: Using fallback stratum")
@@ -104,7 +110,7 @@ def receive_data():
 
     if data.get('sharesRejected') and data.get('sharesAccepted'):
         reject_rate = data.get('sharesRejected') / (data.get('sharesRejected') + data.get('sharesAccepted'))
-        if (reject_rate*100) > 0.5:
-            send_telegram_notification(f"Warning: High reject rate detected ({reject_rate:.2%})")
+        if (reject_rate*100) > shares_reject_limit*100:
+            send_telegram_notification(f"Warning: High reject rate detected ({reject_rate:.2%}, limit: {shares_reject_limit:.2%})")
 
     return jsonify({'message': 'Data saved successfully'}), 200
