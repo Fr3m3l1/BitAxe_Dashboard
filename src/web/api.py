@@ -90,7 +90,7 @@ def receive_data():
         conn.commit()
 
     # Check if the temperature is too high
-    if data.get('temp') and data.get('temp') > 65:
+    if data.get('temp') and data.get('temp') > 66:
         send_telegram_notification(f"Warning: High temperature detected ({data.get('temp')}°C)")
 
     if data.get('vrTemp') and data.get('vrTemp') > 78:
