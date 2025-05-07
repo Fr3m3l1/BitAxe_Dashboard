@@ -154,7 +154,7 @@ def init_dash_app(flask_app):
                                 dbc.Input(
                                     id='vr-temp-limit-input',
                                     type='number',
-                                    min=40,
+                                    min=30,
                                     max=100,
                                     step=0.5,
                                     value=78.0,  # Default value, will be updated by callback
@@ -187,6 +187,22 @@ def init_dash_app(flask_app):
                                     ],
                                     value=[1],  # Default value, will be updated by callback
                                     switch=True,
+                                    className="mb-2"
+                                )
+                            ], md=6, xs=12)
+                        ], className="mb-3"),
+
+                        # Shares Rejection Rate Setting
+                        dbc.Row([
+                            dbc.Col([
+                                html.Label("Power Consumption Alarm Limit (W):", className="mr-2"),
+                                dbc.Input(
+                                    id='power-consumption-limit-input',
+                                    type='number',
+                                    min=10,
+                                    max=100,
+                                    step=0.1,
+                                    value=20,  # Default value, will be updated by callback
                                     className="mb-2"
                                 )
                             ], md=6, xs=12)
@@ -235,20 +251,22 @@ def init_dash_app(flask_app):
          Output('temp-limit-input', 'value'),
          Output('vr-temp-limit-input', 'value'),
          Output('shares-reject-limit-input', 'value'),
-         Output('offline-alarm-toggle', 'value')],
+         Output('offline-alarm-toggle', 'value'),
+         Output('power-consumption-limit-input', 'value')],
         [Input('interval-component', 'n_intervals')]
     )
     def load_settings(n):
         settings = get_settings()
         temp_limit = settings.get('temp_limit', 66.0)
         vr_temp_limit = settings.get('vr_temp_limit', 78.0)
-        shares_reject_limit = settings.get('shares_reject_limit', 0.5)
+        shares_reject_limit = settings.get('shares_reject_limit', 0.5) * 100  # Convert to percentage
         offline_alarm_enabled = settings.get('offline_alarm_enabled', 1)
+        power_consumption_limit = settings.get('power_consumption_limit', 20.0)
         
         # For the checklist, we need to provide a list of values
         offline_alarm_value = [1] if offline_alarm_enabled else []
         
-        return settings, temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_value
+        return settings, temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_value, power_consumption_limit
     
     # Callback to save settings
     @dash_app.callback(
@@ -257,9 +275,10 @@ def init_dash_app(flask_app):
         [State('temp-limit-input', 'value'),
          State('vr-temp-limit-input', 'value'),
          State('shares-reject-limit-input', 'value'),
-         State('offline-alarm-toggle', 'value')]
+         State('offline-alarm-toggle', 'value'),
+         State('power-consumption-limit-input', 'value')]
     )
-    def save_settings(n_clicks, temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled):
+    def save_settings(n_clicks, temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled, power_consumption_limit):
         if n_clicks is None:
             return ""
         
@@ -271,7 +290,8 @@ def init_dash_app(flask_app):
                 float(temp_limit),
                 float(vr_temp_limit),
                 float(shares_reject_limit) / 100,  # Convert from percentage to decimal
-                offline_alarm_value
+                offline_alarm_value,
+                float(power_consumption_limit)
             )
             return html.Div("Settings saved successfully!", className="text-success")
         except Exception as e:
@@ -628,6 +648,11 @@ def init_dash_app(flask_app):
                 "plot_bgcolor": "rgba(0,0,0,0)",
                 "paper_bgcolor": "rgba(0,0,0,0)",
                 "font": {"color": "#ffffff"},
+                "hoverlabel": {
+                    "bgcolor": "#303030",
+                    "font": {"color": "#ffffff"},
+                    "bordercolor": "#484848"
+                },
                 "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1}
             }
         }
@@ -694,6 +719,11 @@ def init_dash_app(flask_app):
                 "plot_bgcolor": "rgba(0,0,0,0)",
                 "paper_bgcolor": "rgba(0,0,0,0)",
                 "font": {"color": "#ffffff"},
+                "hoverlabel": {
+                    "bgcolor": "#303030",
+                    "font": {"color": "#ffffff"},
+                    "bordercolor": "#484848"
+                }
             }
         }
         return figure
@@ -746,7 +776,12 @@ def init_dash_app(flask_app):
                     "title": {"text": "Select a variable to display", "font": {"size": 14}},
                     "plot_bgcolor": "rgba(0,0,0,0)",
                     "paper_bgcolor": "rgba(0,0,0,0)",
-                    "font": {"color": "#ffffff"}
+                    "font": {"color": "#ffffff"},
+                    "hoverlabel": {
+                        "bgcolor": "#303030",
+                        "font": {"color": "#ffffff"},
+                        "bordercolor": "#484848"
+                    }
                 }
             }
         
@@ -842,7 +877,12 @@ def init_dash_app(flask_app):
                 "hovermode": "x unified",
                 "plot_bgcolor": "rgba(0,0,0,0)",
                 "paper_bgcolor": "rgba(0,0,0,0)",
-                "font": {"color": "#ffffff"}
+                "font": {"color": "#ffffff"},
+                "hoverlabel": {
+                    "bgcolor": "#303030",
+                    "font": {"color": "#ffffff"},
+                    "bordercolor": "#484848"
+                }
             }
         }
         return figure

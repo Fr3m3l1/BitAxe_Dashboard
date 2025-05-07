@@ -113,4 +113,7 @@ def receive_data():
         if (reject_rate*100) > shares_reject_limit*100:
             send_telegram_notification(f"Warning: High reject rate detected ({reject_rate:.2%}, limit: {shares_reject_limit:.2%})")
 
+    if data.get('power') and data.get('power') > settings.get('power_consumption_limit', 20.0):
+        send_telegram_notification(f"Warning: High power consumption detected ({data.get('power')}W, limit: {settings.get('power_consumption_limit', 20.0)}W)")
+
     return jsonify({'message': 'Data saved successfully'}), 200

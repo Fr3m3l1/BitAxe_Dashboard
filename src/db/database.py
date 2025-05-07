@@ -67,7 +67,8 @@ def init_db():
                 temp_limit REAL DEFAULT 66.0,
                 vr_temp_limit REAL DEFAULT 78.0,
                 shares_reject_limit REAL DEFAULT 0.5,
-                offline_alarm_enabled INTEGER DEFAULT 1
+                offline_alarm_enabled INTEGER DEFAULT 1,
+                power_consumption_limit REAL DEFAULT 20.0
             )
         ''')
         conn.commit()
@@ -76,8 +77,17 @@ def init_db():
         c.execute("SELECT COUNT(*) FROM settings")
         if c.fetchone()[0] == 0:
             c.execute('''
-                INSERT INTO settings (temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled)
-                VALUES (65.0, 75.0, 1, 1)
+                INSERT INTO settings (temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled, power_consumption_limit)
+                VALUES (65.0, 75.0, 1, 1, 20)
+            ''')
+            conn.commit()
+
+        # create power_consumption_limit column if it doesn't exist
+        c.execute("PRAGMA table_info(settings)")
+        columns = [column[1] for column in c.fetchall()]
+        if 'power_consumption_limit' not in columns:
+            c.execute('''
+                ALTER TABLE settings ADD COLUMN power_consumption_limit REAL DEFAULT 20.0
             ''')
             conn.commit()
 
@@ -94,10 +104,11 @@ def get_settings():
         'temp_limit': 66.0,
         'vr_temp_limit': 78.0,
         'shares_reject_limit': 0.5,
-        'offline_alarm_enabled': 1
+        'offline_alarm_enabled': 1,
+        'power_consumption_limit': 20.0
     }
 
-def update_settings(temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled):
+def update_settings(temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled, power_consumption_limit):
     """Updates the settings in the settings table."""
     with sqlite3.connect(DATABASE) as conn:
         c = conn.cursor()
@@ -106,9 +117,10 @@ def update_settings(temp_limit, vr_temp_limit, shares_reject_limit, offline_alar
             SET temp_limit = ?,
                 vr_temp_limit = ?,
                 shares_reject_limit = ?,
-                offline_alarm_enabled = ?
+                offline_alarm_enabled = ?,
+                power_consumption_limit = ?
             WHERE id = (SELECT id FROM settings ORDER BY id DESC LIMIT 1)
-        ''', (temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled))
+        ''', (temp_limit, vr_temp_limit, shares_reject_limit, offline_alarm_enabled, power_consumption_limit))
         conn.commit()
         return True
 
