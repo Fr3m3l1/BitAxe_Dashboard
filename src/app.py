@@ -1,49 +1,78 @@
+"""
+BitAxe Dashboard - Enhanced Mining Dashboard Application
+
+A modern, responsive web application for monitoring BitAxe miners with
+real-time data visualization, advanced alerting, and improved stability.
+"""
+
 import os
-import schedule
-import time
-import threading
-from flask import Flask, session, redirect, url_for, request
+import logging
+from flask import Flask
+from flask_login import LoginManager
+from flask_sqlalchemy import SQLAlchemy
+from dotenv import load_dotenv
 
-from web.api import api_bp
-from web.auth import auth_bp
-from db.database import init_db
-from web.dashboard import dashboard_bp
-from web.dash_app import init_dash_app
-from service.check_online import check_miner_status
+# Load environment variables
+load_dotenv()
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "defaultsecret")
+# Initialize extensions
+db = SQLAlchemy()
+login_manager = LoginManager()
 
-# Register blueprints
-app.register_blueprint(auth_bp)
-app.register_blueprint(api_bp)
-app.register_blueprint(dashboard_bp)
-
-# Initialize the Dash app with the Flask app as server
-dash_app = init_dash_app(app)
-
-# Protect all routes under /dashboard if not logged in
-@app.before_request
-def restrict_dashboard():
-    if request.path.startswith('/dashboard') and not session.get("logged_in"):
-        return redirect(url_for("auth.login"))
-
-# Function to run the scheduler
-def run_scheduler():
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+def create_app():
+    """Application factory pattern for creating Flask app"""
+    app = Flask(__name__)
+    
+    # Configuration
+    app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-key-change-in-production')
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///miner_data.db')
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['LOGIN_CODE'] = os.getenv('LOGIN_CODE', '1234')
+    
+    # Initialize extensions with app
+    db.init_app(app)
+    login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'
+    login_manager.login_message = 'Please log in to access the dashboard.'
+    login_manager.login_message_category = 'info'
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Register blueprints
+    from .routes.auth import auth_bp
+    from .routes.api import api_bp
+    from .routes.dashboard import dashboard_bp
+    
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(api_bp, url_prefix='/api')
+    app.register_blueprint(dashboard_bp)
+    
+    # Initialize database
+    with app.app_context():
+        db.create_all()
+        
+        # Create default user if not exists
+        from .models import User
+        if not User.query.filter_by(username='admin').first():
+            user = User(username='admin')
+            user.set_password(app.config['LOGIN_CODE'])
+            db.session.add(user)
+            db.session.commit()
+    
+    # Initialize Dash app
+    from .dashboard.dash_app import init_dash_app
+    dash_app = init_dash_app(app)
+    
+    # Start background services
+    from .services.scheduler import start_scheduler
+    start_scheduler()
+    
+    return app
 
 if __name__ == '__main__':
-    init_db()
-    
-    # Schedule the task
-    schedule.every(30).minutes.do(check_miner_status)
-    
-    # Start the scheduler in a separate thread
-    scheduler_thread = threading.Thread(target=run_scheduler)
-    scheduler_thread.daemon = True  # Daemonize thread to stop when main exits
-    scheduler_thread.start()
-    
-    # Run the Flask app
-    app.run(host='0.0.0.0', port=5000)
+    app = create_app()
+    app.run(host='0.0.0.0', port=5000, debug=True)

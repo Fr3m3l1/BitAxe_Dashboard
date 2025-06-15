@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Login - BitAxe Dashboard{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center w-100">
+    <div class="col-12 col-md-6 col-lg-4">
+        <div class="glass-card p-4">
+            <div class="text-center mb-4">
+                <i class="fas fa-microchip fa-3x text-white mb-3"></i>
+                <h2 class="text-white mb-2">BitAxe Dashboard</h2>
+                <p class="text-white-custom mb-0">Sign in to access your mining dashboard</p>
+            </div>
+            
+            <!-- Flash messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-glass alert-dismissible fade show" role="alert">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            {{ message }}
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+            
+            <form method="POST" id="loginForm">
+                <div class="mb-3">
+                    <label for="username" class="form-label text-white-custom">
+                        <i class="fas fa-user me-2"></i>Username
+                    </label>
+                    <input type="text" 
+                           class="form-control" 
+                           id="username" 
+                           name="username" 
+                           placeholder="Enter your username"
+                           required 
+                           autocomplete="username">
+                </div>
+                
+                <div class="mb-3">
+                    <label for="password" class="form-label text-white-custom">
+                        <i class="fas fa-lock me-2"></i>Password
+                    </label>
+                    <input type="password" 
+                           class="form-control" 
+                           id="password" 
+                           name="password" 
+                           placeholder="Enter your password"
+                           required 
+                           autocomplete="current-password">
+                </div>
+                
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="remember" name="remember">
+                    <label class="form-check-label text-white-custom" for="remember">
+                        Remember me
+                    </label>
+                </div>
+                
+                <div class="d-grid">
+                    <button type="submit" class="btn btn-glass btn-lg" id="loginBtn">
+                        <span id="loginText">
+                            <i class="fas fa-sign-in-alt me-2"></i>Sign In
+                        </span>
+                        <span id="loginSpinner" style="display: none;">
+                            <i class="fas fa-spinner loading-spinner me-2"></i>Signing In...
+                        </span>
+                    </button>
+                </div>
+            </form>
+            
+            <div class="text-center mt-4">
+                <small class="text-white-custom">
+                    <i class="fas fa-shield-alt me-1"></i>
+                    Secure access to your mining operations
+                </small>
+            </div>
+        </div>
+        
+        <!-- System status indicator -->
+        <div class="text-center mt-3">
+            <small class="text-white-custom">
+                <i class="fas fa-circle text-success me-1"></i>
+                System Online
+            </small>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('loginForm').addEventListener('submit', function() {
+    const loginBtn = document.getElementById('loginBtn');
+    const loginText = document.getElementById('loginText');
+    const loginSpinner = document.getElementById('loginSpinner');
+    
+    loginText.style.display = 'none';
+    loginSpinner.style.display = 'inline';
+    loginBtn.disabled = true;
+});
+
+// Auto-focus username field
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('username').focus();
+});
+
+// Add smooth transitions
+document.querySelectorAll('.form-control').forEach(function(input) {
+    input.addEventListener('focus', function() {
+        this.style.transform = 'scale(1.02)';
+    });
+    
+    input.addEventListener('blur', function() {
+        this.style.transform = 'scale(1)';
+    });
+});
+</script>
+{% endblock %}

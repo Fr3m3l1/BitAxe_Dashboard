@@ -1,0 +1,989 @@
+#!/usr/bin/env python3
+"""
+Main entry point for the Enhanced BitAxe Dashboard.
+
+This script creates and runs the Flask application with all enhanced features:
+- Modern responsive UI with glassmorphism design
+- Improved authentication and session management
+- Advanced alerting system with Telegram integration
+- Better error handling and logging
+- Scheduled background tasks for monitoring
+- Enhanced API endpoints with validation
+
+Usage:
+    python run_new.py
+
+Environment Variables:
+    FLASK_SECRET_KEY: Secret key for Flask sessions (default: auto-generated)
+    DATABASE_URL: Database connection URL (default: sqlite:///miner_data.db)
+    LOGIN_CODE: Authentication code (default: 1234)
+    TELEGRAM_TOKEN: Telegram bot token for notifications
+    TELEGRAM_CHAT_ID: Telegram chat ID for notifications
+    DEBUG: Enable debug mode (default: False)
+"""
+
+import os
+import sys
+import logging
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+# Add the src directory to Python path
+sys.path.insert(0, str(Path(__file__).parent / 'src'))
+
+try:
+    from flask import Flask
+    from flask_login import LoginManager
+    from flask_sqlalchemy import SQLAlchemy
+    from dotenv import load_dotenv
+    import dash
+    import dash_bootstrap_components as dbc
+    from dash import dcc, html
+    import requests
+    import schedule
+    import pandas as pd
+    print("✅ All required packages are available")
+except ImportError as e:
+    print(f"❌ Missing required package: {e}")
+    print("\nPlease install the required packages:")
+    print("pip install -r requirements_new.txt")
+    sys.exit(1)
+
+# Load environment variables
+load_dotenv()
+
+# Initialize extensions
+db = SQLAlchemy()
+login_manager = LoginManager()
+
+def create_app():
+    """Create and configure the Flask application."""
+    app = Flask(__name__)
+    
+    # Ensure db directory exists
+    db_dir = Path('db')
+    db_dir.mkdir(exist_ok=True)
+      # Configuration
+    app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'bitaxe-dashboard-secret-key-2024')
+    # Use database in db folder - ensure absolute path for SQLite
+    db_path = db_dir / 'miner_data.db'
+    db_absolute_path = db_path.resolve()
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', f'sqlite:///{db_absolute_path}')
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['LOGIN_CODE'] = os.getenv('LOGIN_CODE', '1234')
+    
+    # Initialize extensions
+    db.init_app(app)
+    login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'
+    login_manager.login_message = 'Please log in to access the dashboard.'
+    login_manager.login_message_category = 'info'
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('bitaxe_dashboard.log')
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    
+    # Simple models for the new application
+    from werkzeug.security import generate_password_hash, check_password_hash
+    from flask_login import UserMixin
+    
+    class User(UserMixin, db.Model):
+        __tablename__ = 'users'
+        id = db.Column(db.Integer, primary_key=True)
+        username = db.Column(db.String(80), unique=True, nullable=False)
+        password_hash = db.Column(db.String(120), nullable=False)
+        is_active = db.Column(db.Boolean, default=True)
+        created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))        
+        def set_password(self, password):
+            self.password_hash = generate_password_hash(password)
+        
+        def check_password(self, password):
+            return check_password_hash(self.password_hash, password)
+    
+    class MinerData(db.Model):
+        __tablename__ = 'miner_data'
+        id = db.Column(db.Integer, primary_key=True)
+        timestamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+        power = db.Column(db.Float)
+        voltage = db.Column(db.Float)
+        current = db.Column(db.Float)
+        temp = db.Column(db.Float)
+        vrTemp = db.Column(db.Float)
+        hashRate = db.Column(db.Float)
+        bestDiff = db.Column(db.String(50))
+        bestSessionDiff = db.Column(db.String(50))
+        sharesAccepted = db.Column(db.Integer)
+        sharesRejected = db.Column(db.Integer)
+        hostname = db.Column(db.String(100))
+        uptimeSeconds = db.Column(db.Integer)
+        
+        def to_dict(self):
+            return {
+                'id': self.id,
+                'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+                'power': self.power or 0,
+                'temp': self.temp or 0,
+                'hash_rate': self.hashRate or 0,
+                'best_diff': self.bestDiff or '',
+                'shares_accepted': self.sharesAccepted or 0,
+                'shares_rejected': self.sharesRejected or 0,
+                'hostname': self.hostname or 'Unknown'
+            }    
+    @login_manager.user_loader
+    def load_user(user_id):
+        return User.query.get(int(user_id))
+    
+    # Routes
+    from flask import render_template, request, redirect, url_for, flash, jsonify
+    from flask_login import login_user, logout_user, login_required, current_user
+    
+    @app.route('/login', methods=['GET', 'POST'])
+    def login():
+        if current_user.is_authenticated:
+            return redirect('/dashboard/')
+        
+        if request.method == 'POST':
+            password = request.form.get('password', '')
+            
+            if not password:
+                return login_form('Please enter the password.')
+            
+            # Check if password matches the configured login code
+            if password == app.config['LOGIN_CODE']:
+                # Get or create the default admin user
+                user = User.query.filter_by(username='admin').first()
+                if not user:
+                    user = User(username='admin')
+                    user.set_password(password)
+                    db.session.add(user)
+                    db.session.commit()
+                
+                login_user(user, remember=bool(request.form.get('remember')))
+                logger.info(f"User logged in successfully")
+                return redirect('/dashboard/')
+            else:
+                logger.warning(f"Failed login attempt with incorrect password")
+                return login_form('Invalid password.')
+        
+        return login_form()
+    
+    def login_form(error_msg=None):
+        """Generate a simple HTML login form."""
+        error_html = f'<div style="color: red; margin-bottom: 10px;">{error_msg}</div>' if error_msg else ''
+        
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>BitAxe Dashboard - Login</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                       margin: 0; padding: 0; height: 100vh; display: flex; align-items: center; justify-content: center; }}
+                .login-container {{ background: rgba(255,255,255,0.1); padding: 40px; border-radius: 15px; 
+                                  backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); 
+                                  box-shadow: 0 8px 32px rgba(0,0,0,0.3); }}
+                .login-form {{ max-width: 300px; }}
+                h1 {{ color: white; text-align: center; margin-bottom: 30px; }}                .form-group {{ margin-bottom: 20px; }}
+                label {{ display: block; color: white; margin-bottom: 5px; }}
+                input[type="password"] {{ width: 100%; padding: 10px; border: none; 
+                                        border-radius: 5px; background: rgba(255,255,255,0.2); 
+                                        color: white; }}
+                input[type="password"]::placeholder {{ color: rgba(255,255,255,0.7); }}
+                input[type="submit"] {{ width: 100%; padding: 12px; background: #007bff; color: white; 
+                                      border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }}
+                input[type="submit"]:hover {{ background: #0056b3; }}
+                .checkbox-group {{ display: flex; align-items: center; color: white; }}
+                .checkbox-group input {{ margin-right: 8px; }}
+            </style>
+        </head>
+        <body>
+            <div class="login-container">
+                <div class="login-form">
+                    <h1>🚀 BitAxe Dashboard</h1>
+                    {error_html}                    <form method="post">
+                        <div class="form-group">
+                            <label for="password">Access Code:</label>
+                            <input type="password" id="password" name="password" required placeholder="Enter access code">
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-group">
+                                <input type="checkbox" name="remember"> Remember me
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <input type="submit" value="Login">
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </body>
+        </html>
+        """    
+    @app.route('/logout')
+    def logout():
+        """Logout user and redirect to login page."""
+        if current_user.is_authenticated:
+            username = current_user.username
+            logout_user()
+            logger.info(f"User {username} logged out successfully")
+        return redirect(url_for('login'))
+    
+    @app.route('/')
+    def index():
+        if current_user.is_authenticated:
+            return redirect('/dashboard/')
+        return redirect(url_for('login'))
+    
+    # API routes    @app.route('/api/data', methods=['POST'])
+    def receive_data():
+        """Enhanced API endpoint for receiving miner data."""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data received'}), 400
+            
+            # Create new data record
+            miner_data = MinerData(
+                power=data.get('power'),
+                voltage=data.get('voltage'),
+                current=data.get('current'),
+                temp=data.get('temp'),
+                vrTemp=data.get('vrTemp'),
+                hashRate=data.get('hashRate'),
+                bestDiff=str(data.get('bestDiff', '')),
+                bestSessionDiff=str(data.get('bestSessionDiff', '')),
+                sharesAccepted=data.get('sharesAccepted'),
+                sharesRejected=data.get('sharesRejected'),
+                hostname=data.get('hostname'),
+                uptimeSeconds=data.get('uptimeSeconds')
+            )
+            
+            db.session.add(miner_data)
+            db.session.commit()
+            
+            logger.info(f"Received and saved miner data from {miner_data.hostname or 'Unknown'}")
+            return jsonify({'message': 'Data saved successfully', 'id': miner_data.id}), 200
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error saving miner data: {str(e)}")
+            return jsonify({'error': 'Internal server error'}), 500
+    
+    @app.route('/api/data/latest')
+    @login_required
+    def get_latest_data():
+        """Get the latest miner data."""
+        try:
+            data = MinerData.query.order_by(MinerData.timestamp.desc()).first()
+            if not data:
+                return jsonify({'error': 'No data available'}), 404
+            return jsonify(data.to_dict()), 200
+        except Exception as e:
+            logger.error(f"Error fetching latest data: {str(e)}")
+            return jsonify({'error': 'Internal server error'}), 500
+    
+    # Create Dash app
+    dash_app = dash.Dash(
+        __name__,
+        server=app,
+        url_base_pathname='/dashboard/',
+        external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.FONT_AWESOME]
+    )
+    
+    dash_app.layout = dbc.Container([
+        # Navigation tabs
+        dbc.Tabs([
+            dbc.Tab(label="📊 Main Dashboard", tab_id="main-dashboard"),
+            dbc.Tab(label="� Analysis", tab_id="analysis-dashboard")
+        ], id="tabs", active_tab="main-dashboard", className="mb-3"),
+        
+        # Content area
+        html.Div(id="tab-content"),
+        
+        # Common elements
+        html.Div([
+            dbc.Button("Logout", href="/logout", color="outline-light", className="me-2"),
+            dbc.Button("Generate Test Data", id="test-data-btn", color="info", size="sm"),
+            html.Div(id="test-data-result", className="mt-2")
+        ], className="text-center mt-4"),
+        
+        dcc.Interval(id='interval-component', interval=30*1000, n_intervals=0)
+    ], fluid=True, style={
+        'background': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        'min-height': '100vh',
+        'padding': '20px'
+    })
+    
+    @dash_app.callback(
+        dash.dependencies.Output('stats-content', 'children'),
+        [dash.dependencies.Input('interval-component', 'n_intervals')]
+    )
+    def update_stats(n):
+        try:
+            latest = MinerData.query.order_by(MinerData.timestamp.desc()).first()
+            if latest:
+                return dbc.Row([
+                    dbc.Col([
+                        html.H4(f"{latest.hashRate or 0:.2f} GH/s", className="text-primary"),
+                        html.P("Hash Rate", className="text-muted")
+                    ], width=3),
+                    dbc.Col([
+                        html.H4(f"{latest.temp or 0:.1f}°C", className="text-warning"),
+                        html.P("Temperature", className="text-muted")
+                    ], width=3),
+                    dbc.Col([
+                        html.H4(f"{latest.power or 0:.1f}W", className="text-success"),
+                        html.P("Power", className="text-muted")
+                    ], width=3),                    dbc.Col([
+                        html.H4(latest.hostname or "Unknown", className="text-info"),
+                        html.P("Hostname", className="text-muted")
+                    ], width=3)
+                ])
+            else:
+                return html.P("No data available", className="text-muted text-center")
+        except Exception as e:
+            return html.P(f"Error loading data: {str(e)}", className="text-danger text-center")
+      # Hash Rate Chart Callback
+    @dash_app.callback(
+        dash.dependencies.Output('hashrate-chart', 'figure'),
+        [dash.dependencies.Input('interval-component', 'n_intervals')]
+    )
+    def update_hashrate_chart(n):
+        import plotly.graph_objects as go
+        
+        try:
+            # Get last 24 hours of data
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            data = MinerData.query.filter(MinerData.timestamp >= cutoff).order_by(MinerData.timestamp).all()
+            
+            if data:
+                timestamps = [d.timestamp for d in data]
+                hash_rates = [d.hashRate or 0 for d in data]
+                
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=timestamps,
+                    y=hash_rates,
+                    mode='lines+markers',
+                    name='Hash Rate',
+                    line=dict(color='#00d4ff', width=3),
+                    marker=dict(size=4, color='#00d4ff'),
+                    fill='tonexty',
+                    fillcolor='rgba(0, 212, 255, 0.1)'
+                ))
+                
+                fig.update_layout(
+                    title=dict(
+                        text="Hash Rate Performance", 
+                        font=dict(color='white', size=16),
+                        x=0.5
+                    ),
+                    xaxis=dict(
+                        title="Time",
+                        gridcolor='rgba(255,255,255,0.2)',
+                        color='white'
+                    ),
+                    yaxis=dict(
+                        title="Hash Rate (GH/s)",
+                        gridcolor='rgba(255,255,255,0.2)',
+                        color='white'
+                    ),
+                    template="plotly_dark",
+                    height=400,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0.3)',
+                    margin=dict(l=60, r=60, t=60, b=60)
+                )
+                
+                return fig
+            else:
+                # Empty chart
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="No hash rate data available",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.5, showarrow=False,
+                    font=dict(color="white", size=16)
+                )
+                fig.update_layout(
+                    template="plotly_dark", 
+                    height=400,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0.3)',
+                    xaxis=dict(showgrid=False, showticklabels=False),
+                    yaxis=dict(showgrid=False, showticklabels=False)
+                )
+                return fig
+                
+        except Exception as e:
+            logger.error(f"Error updating hash rate chart: {str(e)}")
+            # Error chart
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error loading hash rate chart",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(color="white", size=16)
+            )
+            fig.update_layout(
+                template="plotly_dark", 
+                height=400,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0.3)',
+                xaxis=dict(showgrid=False, showticklabels=False),
+                yaxis=dict(showgrid=False, showticklabels=False)
+            )
+            return fig
+    
+    # Temperature Chart Callback
+    @dash_app.callback(
+        dash.dependencies.Output('temperature-chart', 'figure'),
+        [dash.dependencies.Input('interval-component', 'n_intervals')]
+    )
+    def update_temperature_chart(n):
+        import plotly.graph_objects as go
+        
+        try:
+            # Get last 24 hours of data
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            data = MinerData.query.filter(MinerData.timestamp >= cutoff).order_by(MinerData.timestamp).all()
+            
+            if data:
+                timestamps = [d.timestamp for d in data]
+                temps = [d.temp or 0 for d in data]
+                vr_temps = [d.vrTemp or 0 for d in data]
+                
+                fig = go.Figure()
+                
+                fig.add_trace(go.Scatter(
+                    x=timestamps,
+                    y=temps,
+                    mode='lines+markers',
+                    name='Temperature',
+                    line=dict(color='#00ff88', width=3),
+                    marker=dict(size=4, color='#00ff88')
+                ))
+                
+                fig.add_trace(go.Scatter(
+                    x=timestamps,
+                    y=vr_temps,
+                    mode='lines+markers',
+                    name='VR Temperature',
+                    line=dict(color='#ff6b6b', width=3),
+                    marker=dict(size=4, color='#ff6b6b')
+                ))
+                
+                fig.update_layout(
+                    title=dict(
+                        text="Temperature Monitoring", 
+                        font=dict(color='white', size=16),
+                        x=0.5
+                    ),
+                    xaxis=dict(
+                        title="Time",
+                        gridcolor='rgba(255,255,255,0.2)',
+                        color='white'
+                    ),
+                    yaxis=dict(
+                        title="Temperature (°C)",
+                        gridcolor='rgba(255,255,255,0.2)',
+                        color='white'
+                    ),
+                    template="plotly_dark",
+                    height=400,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0.3)',
+                    margin=dict(l=60, r=60, t=60, b=60),
+                    legend=dict(
+                        font=dict(color='white'),
+                        bgcolor='rgba(0,0,0,0.5)'
+                    )
+                )
+                
+                return fig
+            else:
+                # Empty chart
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="No temperature data available",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.5, showarrow=False,
+                    font=dict(color="white", size=16)
+                )
+                fig.update_layout(
+                    template="plotly_dark", 
+                    height=400,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0.3)',
+                    xaxis=dict(showgrid=False, showticklabels=False),
+                    yaxis=dict(showgrid=False, showticklabels=False)
+                )
+                return fig
+                
+        except Exception as e:
+            logger.error(f"Error updating temperature chart: {str(e)}")
+            # Error chart
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error loading temperature chart",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(color="white", size=16)
+            )
+            fig.update_layout(
+                template="plotly_dark", 
+                height=400,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0.3)',
+                xaxis=dict(showgrid=False, showticklabels=False),
+                yaxis=dict(showgrid=False, showticklabels=False)
+            )
+            return fig
+    
+    @dash_app.callback(
+        dash.dependencies.Output('test-data-result', 'children'),
+        [dash.dependencies.Input('test-data-btn', 'n_clicks')]
+    )
+    def handle_test_data_generation(n_clicks):
+        if n_clicks:
+            try:
+                # Check if data already exists
+                existing_data = MinerData.query.count()
+                if existing_data > 100:
+                    return dbc.Alert(f'Already have {existing_data} data points. Skipping test data generation.', 
+                                   color="info", dismissable=True)
+                
+                generate_test_data()
+                return dbc.Alert('Test data generated successfully!', color="success", dismissable=True)
+            except Exception as e:
+                return dbc.Alert(f'Error generating test data: {str(e)}', color="danger", dismissable=True)
+        return ""
+    
+    # Test data generation function
+    def generate_test_data():
+        """Generate some test data for demonstration purposes."""
+        import random
+        
+        # Create 24 hours of test data (one point every 5 minutes)
+        for i in range(288):  # 24 * 60 / 5 = 288 points
+            timestamp = datetime.now(timezone.utc) - timedelta(minutes=i*5)
+              # Generate realistic test data
+            base_hash_rate = 485.0
+            hash_rate = base_hash_rate + random.uniform(-50, 50)
+            
+            base_temp = 45.0
+            temp = base_temp + random.uniform(-5, 15)
+            
+            base_power = 15.5
+            power = base_power + random.uniform(-2, 3)
+            
+            test_data = MinerData(
+                timestamp=timestamp,
+                power=power,
+                voltage=12.0 + random.uniform(-0.5, 0.5),
+                current=power / 12.0,
+                temp=temp,
+                vrTemp=temp + random.uniform(5, 15),
+                hashRate=hash_rate,
+                bestDiff=str(random.randint(1000, 50000)),
+                bestSessionDiff=str(random.randint(100, 5000)),
+                sharesAccepted=random.randint(1000, 2000),
+                sharesRejected=random.randint(0, 10),
+                hostname="bitaxe-test-001",
+                uptimeSeconds=86400 + i * 300
+            )
+            
+            db.session.add(test_data)
+        
+        db.session.commit()
+        logger.info("Generated test data for 24 hours")
+
+    # Initialize database and create admin user
+    with app.app_context():
+        db.create_all()
+        if not User.query.filter_by(username='admin').first():
+            admin = User(username='admin')
+            admin.set_password(app.config['LOGIN_CODE'])
+            db.session.add(admin)
+            db.session.commit()
+            logger.info("Created admin user with default password")
+    
+    # Dashboard authentication middleware
+    @app.before_request
+    def check_dashboard_auth():
+        """Check authentication for dashboard routes."""
+        if request.path.startswith('/dashboard/'):
+            if not current_user.is_authenticated:
+                return redirect(url_for('login'))
+    
+    # Tab content callback
+    @dash_app.callback(
+        dash.dependencies.Output('tab-content', 'children'),
+        [dash.dependencies.Input('tabs', 'active_tab')]
+    )
+    def render_tab_content(active_tab):
+        if active_tab == "main-dashboard":
+            return html.Div([
+                html.H1("🚀 BitAxe Dashboard", className="text-center text-white mb-4"),
+                html.P("Welcome to the BitAxe monitoring system!", 
+                       className="text-center text-white-50 mb-4"),
+                
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader("📊 Latest Statistics"),
+                            dbc.CardBody([
+                                html.Div(id="stats-content", children="Loading...")
+                            ])
+                        ], className="mb-3")
+                    ], width=12)
+                ]),
+                
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader("📈 Hash Rate Over Time"),
+                            dbc.CardBody([
+                                dcc.Graph(id="hashrate-chart", style={'height': '400px'})
+                            ])
+                        ], className="mb-3")
+                    ], width=6),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader("🌡️ Temperature Over Time"),
+                            dbc.CardBody([
+                                dcc.Graph(id="temperature-chart", style={'height': '400px'})
+                            ])
+                        ], className="mb-3")
+                    ], width=6)                ])
+            ])
+        
+        elif active_tab == "analysis-dashboard":
+            return html.Div([
+                html.H1("📈 Flexible Analysis", className="text-center text-white mb-4"),
+                html.P("Compare up to 2 variables over time", 
+                       className="text-center text-white-50 mb-4"),
+                
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader("📊 Variable Selection"),
+                            dbc.CardBody([
+                                dbc.Row([
+                                    dbc.Col([
+                                        html.Label("Select First Variable:", className="text-white mb-2"),
+                                        dcc.Dropdown(
+                                            id="analysis-var1",
+                                            options=[
+                                                {'label': 'Hash Rate (GH/s)', 'value': 'hashRate'},
+                                                {'label': 'Temperature (°C)', 'value': 'temp'},
+                                                {'label': 'VR Temperature (°C)', 'value': 'vrTemp'},
+                                                {'label': 'Power (W)', 'value': 'power'},
+                                                {'label': 'Voltage (V)', 'value': 'voltage'},
+                                                {'label': 'Current (A)', 'value': 'current'},
+                                                {'label': 'Shares Accepted', 'value': 'sharesAccepted'},
+                                                {'label': 'Shares Rejected', 'value': 'sharesRejected'}
+                                            ],
+                                            value='hashRate',
+                                            placeholder="Select first variable...",
+                                            style={'color': 'black'}
+                                        )
+                                    ], width=6),
+                                    dbc.Col([
+                                        html.Label("Select Second Variable:", className="text-white mb-2"),
+                                        dcc.Dropdown(
+                                            id="analysis-var2",
+                                            options=[
+                                                {'label': 'None', 'value': 'none'},
+                                                {'label': 'Hash Rate (GH/s)', 'value': 'hashRate'},
+                                                {'label': 'Temperature (°C)', 'value': 'temp'},
+                                                {'label': 'VR Temperature (°C)', 'value': 'vrTemp'},
+                                                {'label': 'Power (W)', 'value': 'power'},
+                                                {'label': 'Voltage (V)', 'value': 'voltage'},
+                                                {'label': 'Current (A)', 'value': 'current'},
+                                                {'label': 'Shares Accepted', 'value': 'sharesAccepted'},
+                                                {'label': 'Shares Rejected', 'value': 'sharesRejected'}
+                                            ],
+                                            value='temp',
+                                            placeholder="Select second variable...",
+                                            style={'color': 'black'}
+                                        )
+                                    ], width=6)
+                                ]),
+                                dbc.Row([
+                                    dbc.Col([
+                                        html.Label("Time Range:", className="text-white mb-2 mt-3"),
+                                        dcc.Dropdown(
+                                            id="analysis-timerange",
+                                            options=[
+                                                {'label': 'Last 1 Hour', 'value': 1},
+                                                {'label': 'Last 6 Hours', 'value': 6},
+                                                {'label': 'Last 12 Hours', 'value': 12},
+                                                {'label': 'Last 24 Hours', 'value': 24},
+                                                {'label': 'Last 3 Days', 'value': 72},
+                                                {'label': 'Last Week', 'value': 168}
+                                            ],
+                                            value=24,
+                                            style={'color': 'black'}
+                                        )
+                                    ], width=6)
+                                ])
+                            ])
+                        ], className="mb-3")
+                    ], width=12)
+                ]),
+                
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader("📈 Custom Variable Analysis"),
+                            dbc.CardBody([
+                                dcc.Graph(id="analysis-chart", style={'height': '500px'})
+                            ])
+                        ])
+                    ], width=12)
+                ])
+            ])
+        
+        return html.Div("Error loading content")
+    
+    # Analysis Chart Callback
+    @dash_app.callback(
+        dash.dependencies.Output('analysis-chart', 'figure'),
+        [
+            dash.dependencies.Input('analysis-var1', 'value'),
+            dash.dependencies.Input('analysis-var2', 'value'),
+            dash.dependencies.Input('analysis-timerange', 'value'),
+            dash.dependencies.Input('interval-component', 'n_intervals')
+        ]
+    )
+    def update_analysis_chart(var1, var2, timerange_hours, n):
+        import plotly.graph_objects as go
+        
+        try:
+            # Get data for the specified time range
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=timerange_hours)
+            data = MinerData.query.filter(MinerData.timestamp >= cutoff).order_by(MinerData.timestamp).all()
+            
+            if not data:
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="No data available for selected time range",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.5, showarrow=False,
+                    font=dict(color="white", size=16)
+                )
+                fig.update_layout(
+                    template="plotly_dark", 
+                    height=500,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0.3)',
+                    xaxis=dict(showgrid=False, showticklabels=False),
+                    yaxis=dict(showgrid=False, showticklabels=False)
+                )
+                return fig
+            
+            timestamps = [d.timestamp for d in data]
+            
+            # Variable mapping and labels
+            var_mapping = {
+                'hashRate': ('Hash Rate', 'GH/s', lambda d: d.hashRate or 0, '#00d4ff'),
+                'temp': ('Temperature', '°C', lambda d: d.temp or 0, '#00ff88'),
+                'vrTemp': ('VR Temperature', '°C', lambda d: d.vrTemp or 0, '#ff6b6b'),
+                'power': ('Power', 'W', lambda d: d.power or 0, '#ffeb3b'),
+                'voltage': ('Voltage', 'V', lambda d: d.voltage or 0, '#ff9800'),
+                'current': ('Current', 'A', lambda d: d.current or 0, '#9c27b0'),
+                'sharesAccepted': ('Shares Accepted', 'count', lambda d: d.sharesAccepted or 0, '#4caf50'),
+                'sharesRejected': ('Shares Rejected', 'count', lambda d: d.sharesRejected or 0, '#f44336')
+            }
+            
+            fig = go.Figure()
+            
+            # Add first variable
+            if var1 and var1 in var_mapping:
+                var1_info = var_mapping[var1]
+                var1_values = [var1_info[2](d) for d in data]
+                
+                fig.add_trace(go.Scatter(
+                    x=timestamps,
+                    y=var1_values,
+                    mode='lines+markers',
+                    name=f'{var1_info[0]} ({var1_info[1]})',
+                    line=dict(color=var1_info[3], width=3),
+                    marker=dict(size=4, color=var1_info[3]),
+                    yaxis='y'
+                ))
+            
+            # Add second variable if selected and different from first
+            if var2 and var2 != 'none' and var2 != var1 and var2 in var_mapping:
+                var2_info = var_mapping[var2]
+                var2_values = [var2_info[2](d) for d in data]
+                
+                fig.add_trace(go.Scatter(
+                    x=timestamps,
+                    y=var2_values,
+                    mode='lines+markers',
+                    name=f'{var2_info[0]} ({var2_info[1]})',
+                    line=dict(color=var2_info[3], width=3),
+                    marker=dict(size=4, color=var2_info[3]),
+                    yaxis='y2'
+                ))
+                
+                # Dual y-axis layout
+                fig.update_layout(
+                    yaxis=dict(
+                        title=f"{var_mapping[var1][0]} ({var_mapping[var1][1]})",
+                        side='left',
+                        gridcolor='rgba(255,255,255,0.2)',
+                        color='white'
+                    ),
+                    yaxis2=dict(
+                        title=f"{var_mapping[var2][0]} ({var_mapping[var2][1]})",
+                        side='right',
+                        overlaying='y',
+                        gridcolor='rgba(255,255,255,0.1)',
+                        color='white'
+                    )
+                )
+            else:
+                # Single y-axis layout
+                if var1 and var1 in var_mapping:
+                    fig.update_layout(
+                        yaxis=dict(
+                            title=f"{var_mapping[var1][0]} ({var_mapping[var1][1]})",
+                            gridcolor='rgba(255,255,255,0.2)',
+                            color='white'
+                        )
+                    )
+            
+            # Common layout settings
+            fig.update_layout(
+                title=dict(
+                    text=f"Custom Analysis - {timerange_hours}h timerange", 
+                    font=dict(color='white', size=18),
+                    x=0.5
+                ),
+                xaxis=dict(
+                    title="Time",
+                    gridcolor='rgba(255,255,255,0.2)',
+                    color='white'
+                ),
+                template="plotly_dark",
+                height=500,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0.3)',
+                margin=dict(l=80, r=80, t=80, b=60),
+                legend=dict(
+                    font=dict(color='white'),
+                    bgcolor='rgba(0,0,0,0.5)',
+                    x=0.02,
+                    y=0.98
+                )
+            )
+            
+            return fig
+                
+        except Exception as e:
+            logger.error(f"Error updating analysis chart: {str(e)}")
+            # Error chart
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error loading analysis chart: {str(e)}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(color="white", size=16)
+            )
+            fig.update_layout(
+                template="plotly_dark", 
+                height=500,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0.3)',
+                xaxis=dict(showgrid=False, showticklabels=False),
+                yaxis=dict(showgrid=False, showticklabels=False)
+            )
+            return fig
+    
+    # ...existing code...
+if __name__ == '__main__':
+    print("🚀 Starting Enhanced BitAxe Dashboard...")
+    print("=" * 60)
+    
+    # Check if all required packages are available
+    missing_packages = []
+    required_packages = [
+        ('flask', 'Flask'),
+        ('flask_login', 'Flask-Login'),
+        ('flask_sqlalchemy', 'Flask-SQLAlchemy'),
+        ('dash', 'Dash'),
+        ('dash_bootstrap_components', 'Dash Bootstrap Components'),
+        ('plotly', 'Plotly'),
+        ('pandas', 'Pandas'),
+        ('requests', 'Requests')    ]
+    
+    for package, name in required_packages:
+        try:
+            __import__(package)
+        except ImportError:
+            missing_packages.append(name)
+    
+    if missing_packages:
+        print("❌ Missing required packages:")
+        for package in missing_packages:
+            print(f"   - {package}")
+        print("\nPlease install missing packages:")
+        print("pip install -r requirements_new.txt")
+        sys.exit(1)
+    
+    print("✅ All required packages are available")
+    
+    # Create and run the app
+    app = create_app()
+    
+    data_count = 0
+    with app.app_context():
+        try:
+            # Count data points if table exists
+            result = db.session.execute('SELECT COUNT(*) FROM miner_data')
+            data_count = result.scalar() or 0
+        except Exception:
+            data_count = 0
+    
+    print("=" * 60)
+    print(f"🔑 Login Credentials:")
+    print(f"   Username: admin")
+    print(f"   Password: {app.config['LOGIN_CODE']}")
+    print("=" * 60)
+    print(f"🌐 URLs:")
+    print(f"   Dashboard: http://localhost:5000/dashboard/")
+    print(f"   Login:     http://localhost:5000/login")
+    print(f"   API:       http://localhost:5000/api/data")
+    print("=" * 60)
+    print(f"📊 Database Status:")
+    print(f"   Database: {Path('db/miner_data.db').resolve()}")
+    print(f"   Data points: {data_count}")
+    print("=" * 60)
+    
+    # Run the development server
+    debug_mode = os.getenv('DEBUG', 'False').lower() == 'true'
+    print(f"🚀 Starting server (Debug: {debug_mode})...")
+    
+    try:
+        app.run(
+            host='0.0.0.0', 
+            port=5000, 
+            debug=debug_mode,
+            threaded=True
+        )
+    except KeyboardInterrupt:
+        print("\n👋 Server stopped by user")
+    except Exception as e:
+        print(f"\n❌ Server error: {e}")
+        sys.exit(1)

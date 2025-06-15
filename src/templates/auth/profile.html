@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Profile - BitAxe Dashboard{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center w-100">
+    <div class="col-12 col-md-8 col-lg-6">
+        <div class="glass-card p-4">
+            <div class="text-center mb-4">
+                <i class="fas fa-user-circle fa-3x text-white mb-3"></i>
+                <h2 class="text-white mb-2">User Profile</h2>
+                <p class="text-white-custom mb-0">Manage your account settings</p>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label text-white-custom">
+                            <i class="fas fa-user me-2"></i>Username
+                        </label>
+                        <input type="text" class="form-control" value="{{ user.username }}" readonly>
+                    </div>
+                </div>
+                
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label text-white-custom">
+                            <i class="fas fa-calendar me-2"></i>Member Since
+                        </label>
+                        <input type="text" class="form-control" value="{{ user.created_at.strftime('%B %d, %Y') }}" readonly>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label text-white-custom">
+                    <i class="fas fa-info-circle me-2"></i>Account Status
+                </label>
+                <div class="d-flex align-items-center">
+                    <span class="badge bg-success me-2">
+                        <i class="fas fa-check-circle me-1"></i>Active
+                    </span>
+                    <small class="text-white-custom">Your account is active and in good standing</small>
+                </div>
+            </div>
+            
+            <hr class="border-light">
+            
+            <div class="text-center">
+                <a href="/dashboard/" class="btn btn-glass me-2">
+                    <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                </a>
+                <a href="/logout" class="btn btn-outline-light">
+                    <i class="fas fa-sign-out-alt me-2"></i>Logout
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
