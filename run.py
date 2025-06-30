@@ -35,6 +35,7 @@ try:
     from flask import Flask
     from flask_login import LoginManager
     from flask_sqlalchemy import SQLAlchemy
+    from sqlalchemy import text
     from dotenv import load_dotenv
     import dash
     import dash_bootstrap_components as dbc
@@ -55,6 +56,173 @@ load_dotenv()
 # Initialize extensions
 db = SQLAlchemy()
 login_manager = LoginManager()
+
+# Global monitoring system functions
+def send_telegram_alert_global(app_instance, message):
+    """Send alert message via Telegram using app context."""
+    try:
+        with app_instance.app_context():
+            # Get telegram settings from database
+            telegram_token_result = db.session.execute(
+                text("SELECT setting_value FROM settings WHERE setting_key = 'telegram_token'")
+            ).fetchone()
+            telegram_token = telegram_token_result[0] if telegram_token_result else None
+            
+            telegram_chat_result = db.session.execute(
+                text("SELECT setting_value FROM settings WHERE setting_key = 'telegram_chat_id'")
+            ).fetchone()
+            telegram_chat_id = telegram_chat_result[0] if telegram_chat_result else None
+            
+            if not telegram_token or not telegram_chat_id:
+                logging.getLogger(__name__).warning("Telegram credentials not configured for alerts")
+                return False
+            
+            import requests
+            url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+            
+            response = requests.post(url, json={
+                'chat_id': telegram_chat_id,
+                'text': message,
+                'parse_mode': 'Markdown'
+            }, timeout=10)
+            
+            if response.status_code == 200:
+                logging.getLogger(__name__).info(f"Telegram alert sent successfully")
+                return True
+            else:
+                logging.getLogger(__name__).error(f"Failed to send Telegram alert: {response.text}")
+                return False
+                
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error sending Telegram alert: {str(e)}")
+        return False
+
+def check_thresholds_global(app_instance):
+    """Check latest data against configured thresholds and send alerts."""
+    try:
+        with app_instance.app_context():
+            # Import models within app context
+            logger = logging.getLogger(__name__)
+            
+            # Get latest data  
+            latest_data = db.session.execute(
+                text('SELECT * FROM miner_data ORDER BY timestamp DESC LIMIT 1')
+            ).fetchone()
+            
+            if not latest_data:
+                return
+            
+            # Get threshold settings
+            temp_high_setting = db.session.execute(
+                text("SELECT setting_value FROM settings WHERE setting_key = 'temp_high_threshold'")
+            ).fetchone()
+            temp_high = float(temp_high_setting[0] if temp_high_setting else 85)
+            
+            vrtemp_high_setting = db.session.execute(
+                text("SELECT setting_value FROM settings WHERE setting_key = 'vrtemp_high_threshold'")
+            ).fetchone()
+            vrtemp_high = float(vrtemp_high_setting[0] if vrtemp_high_setting else 75)
+            
+            hashrate_low_setting = db.session.execute(
+                text("SELECT setting_value FROM settings WHERE setting_key = 'hashrate_low_threshold'")
+            ).fetchone()
+            hashrate_low = float(hashrate_low_setting[0] if hashrate_low_setting else 400)
+            
+            hashrate_high_setting = db.session.execute(
+                text("SELECT setting_value FROM settings WHERE setting_key = 'hashrate_high_threshold'")
+            ).fetchone()
+            hashrate_high = float(hashrate_high_setting[0] if hashrate_high_setting else 800)
+            
+            power_high_setting = db.session.execute(
+                text("SELECT setting_value FROM settings WHERE setting_key = 'power_high_threshold'")
+            ).fetchone()
+            power_high = float(power_high_setting[0] if power_high_setting else 15)
+            
+            alerts = []
+            current_temp = latest_data.temp if hasattr(latest_data, 'temp') else latest_data[4]  # temp column
+            current_vrtemp = latest_data.vrTemp if hasattr(latest_data, 'vrTemp') else latest_data[5]  # vrTemp column
+            current_hashrate = latest_data.hashRate if hasattr(latest_data, 'hashRate') else latest_data[6]  # hashRate column
+            current_power = latest_data.power if hasattr(latest_data, 'power') else latest_data[1]  # power column
+            current_hostname = latest_data.hostname if hasattr(latest_data, 'hostname') else latest_data[11]  # hostname column
+            
+            # Check temperature thresholds
+            if current_temp and current_temp > temp_high:
+                alerts.append(f"🌡️ **High Temperature Alert**\n"
+                             f"Current: {current_temp:.1f}°C\n"
+                             f"Threshold: {temp_high}°C")
+            
+            # Check VR temperature thresholds
+            if current_vrtemp and current_vrtemp > vrtemp_high:
+                alerts.append(f"🔥 **High VR Temperature Alert**\n"
+                             f"Current: {current_vrtemp:.1f}°C\n"
+                             f"Threshold: {vrtemp_high}°C")
+            
+            # Check hash rate thresholds
+            if current_hashrate and current_hashrate < hashrate_low:
+                alerts.append(f"📉 **Low Hash Rate Alert**\n"
+                             f"Current: {current_hashrate:.1f} GH/s\n"
+                             f"Threshold: {hashrate_low} GH/s")
+            
+            if current_hashrate and current_hashrate > hashrate_high:
+                alerts.append(f"📈 **High Hash Rate Alert**\n"
+                             f"Current: {current_hashrate:.1f} GH/s\n"
+                             f"Threshold: {hashrate_high} GH/s")
+            
+            # Check power thresholds
+            if current_power and current_power > power_high:
+                alerts.append(f"⚡️ **High Power Alert**\n"
+                             f"Current: {current_power:.1f}W\n"
+                             f"Threshold: {power_high}W")
+            
+            # Send alerts if any thresholds are violated
+            if alerts:
+                hostname = current_hostname or "Unknown"
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                message = f"🚨 **BitAxe Alert - {hostname}**\n"
+                message += f"Time: {timestamp}\n\n"
+                message += "\n\n".join(alerts)
+                
+                send_telegram_alert_global(app_instance, message)
+                logger.warning(f"Threshold violations detected: {len(alerts)} alerts sent")
+            
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error checking thresholds: {str(e)}")
+
+def start_monitoring_global(app_instance):
+    """Start the background monitoring system."""
+    try:
+        import threading
+        import time
+        
+        def monitoring_loop():
+            while True:
+                try:
+                    check_thresholds_global(app_instance)
+                    
+                    # Get alert interval from settings (default 5 minutes)
+                    with app_instance.app_context():
+                        interval_setting = db.session.execute(
+                            text("SELECT setting_value FROM settings WHERE setting_key = 'alert_interval'")
+                        ).fetchone()
+                        alert_interval = int(interval_setting[0] if interval_setting else 5)
+                    
+                    time.sleep(alert_interval * 60)  # Convert minutes to seconds
+                    
+                except Exception as e:
+                    logging.getLogger(__name__).error(f"Error in monitoring loop: {str(e)}")
+                    time.sleep(60)  # Wait 1 minute before retrying
+        
+        # Start monitoring in background thread
+        monitor_thread = threading.Thread(target=monitoring_loop, daemon=True)
+        monitor_thread.start()
+        logging.getLogger(__name__).info("Background monitoring system started")
+        print("✅ Background alert monitoring system started")
+        
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to start monitoring system: {str(e)}")
+        print(f"❌ Failed to start monitoring system: {str(e)}")
 
 def create_app():
     """Create and configure the Flask application."""
@@ -324,6 +492,101 @@ def create_app():
         server=app,
         url_base_pathname='/dashboard/',
         external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.FONT_AWESOME]    )
+    
+    # Custom CSS for dropdown styling
+    dash_app.index_string = '''
+    <!DOCTYPE html>
+    <html>
+        <head>
+            {%metas%}
+            <title>{%title%}</title>
+            {%favicon%}
+            {%css%}
+            <style>
+                /* Custom styles for Dash dropdowns */
+                .Select-control {
+                    background-color: white !important;
+                    color: black !important;
+                    border: 1px solid #ccc !important;
+                }
+                .Select-control .Select-value {
+                    color: black !important;
+                }
+                .Select-control .Select-placeholder {
+                    color: #666 !important;
+                }
+                .Select-menu {
+                    background-color: white !important;
+                }
+                .Select-option {
+                    background-color: white !important;
+                    color: black !important;
+                }
+                .Select-option:hover {
+                    background-color: #f8f9fa !important;
+                    color: black !important;
+                }
+                .Select-option.is-selected {
+                    background-color: #007bff !important;
+                    color: white !important;
+                }
+                /* For newer React Select versions */
+                div[class*="control"] {
+                    background-color: white !important;
+                    border: 1px solid #ccc !important;
+                }
+                div[class*="singleValue"] {
+                    color: black !important;
+                }
+                div[class*="placeholder"] {
+                    color: #666 !important;
+                }
+                div[class*="menu"] {
+                    background-color: white !important;
+                }
+                div[class*="option"] {
+                    background-color: white !important;
+                    color: black !important;
+                }
+                div[class*="option"]:hover {
+                    background-color: #f8f9fa !important;
+                    color: black !important;
+                }
+                /* Specific styling for analysis dropdowns */
+                .analysis-dropdown .Select-control {
+                    background-color: white !important;
+                    color: black !important;
+                    border: 1px solid #ccc !important;
+                }
+                .analysis-dropdown .Select-value-label {
+                    color: black !important;
+                }
+                .analysis-dropdown .Select-placeholder {
+                    color: #666 !important;
+                }
+                /* For Dash components specifically */
+                ._dash-dropdown .Select-control {
+                    background-color: white !important;
+                    color: black !important;
+                }
+                ._dash-dropdown .Select-value {
+                    color: black !important;
+                }
+                ._dash-dropdown .Select-input input {
+                    color: black !important;
+                }
+            </style>
+        </head>
+        <body>
+            {%app_entry%}
+            <footer>
+                {%config%}
+                {%scripts%}
+                {%renderer%}
+            </footer>
+        </body>
+    </html>
+    '''
     
     dash_app.layout = dbc.Container([
         # Navigation tabs
@@ -664,12 +927,14 @@ def create_app():
         # Create default settings if they don't exist
         default_settings = {
             'temp_high_threshold': '85',
+            'vrtemp_high_threshold': '75',
             'hashrate_low_threshold': '400',
             'hashrate_high_threshold': '800',
             'power_high_threshold': '15',
             'alert_interval': '5',
             'telegram_token': '',
-            'telegram_chat_id': ''        }
+            'telegram_chat_id': ''
+        }
         
         for key, value in default_settings.items():
             if not Settings.query.filter_by(setting_key=key).first():
@@ -746,7 +1011,7 @@ def create_app():
                             dbc.CardBody([
                                 dbc.Row([
                                     dbc.Col([
-                                        html.Label("Select First Variable:", className="text-white mb-2"),
+                                        html.Label("Select First Variable:", className="mb-2"),
                                         dcc.Dropdown(
                                             id="analysis-var1",
                                             options=[
@@ -761,11 +1026,16 @@ def create_app():
                                             ],
                                             value='hashRate',
                                             placeholder="Select first variable...",
-                                            style={'color': 'black'}
+                                            className="analysis-dropdown",
+                                            style={
+                                                'color': 'black',
+                                                'backgroundColor': 'white',
+                                                'border': '1px solid #ccc'
+                                            }
                                         )
                                     ], width=6),
                                     dbc.Col([
-                                        html.Label("Select Second Variable:", className="text-white mb-2"),
+                                        html.Label("Select Second Variable:", className="mb-2"),
                                         dcc.Dropdown(
                                             id="analysis-var2",
                                             options=[
@@ -781,13 +1051,18 @@ def create_app():
                                             ],
                                             value='temp',
                                             placeholder="Select second variable...",
-                                            style={'color': 'black'}
+                                            className="analysis-dropdown",
+                                            style={
+                                                'color': 'black',
+                                                'backgroundColor': 'white',
+                                                'border': '1px solid #ccc'
+                                            }
                                         )
                                     ], width=6)
                                 ]),
                                 dbc.Row([
                                     dbc.Col([
-                                        html.Label("Time Range:", className="text-white mb-2 mt-3"),
+                                        html.Label("Time Range:", className="mb-2 mt-3"),
                                         dcc.Dropdown(
                                             id="analysis-timerange",
                                             options=[
@@ -799,7 +1074,12 @@ def create_app():
                                                 {'label': 'Last Week', 'value': 168}
                                             ],
                                             value=24,
-                                            style={'color': 'black'}
+                                            className="analysis-dropdown",
+                                            style={
+                                                'color': 'black',
+                                                'backgroundColor': 'white',
+                                                'border': '1px solid #ccc'
+                                            }
                                         )
                                     ], width=6)
                                 ])
@@ -831,8 +1111,7 @@ def create_app():
                             dbc.CardHeader("🔔 Alarm Configuration"),
                             dbc.CardBody([
                                 dbc.Form([                                    # Temperature Alarms
-                                    dbc.Row([
-                                        dbc.Col([
+                                    dbc.Row([                                        dbc.Col([
                                             html.H5("Temperature Alarms", className="text-primary mb-3"),
                                             dbc.Label("High Temperature Alert (°C):", className="mb-2"),
                                             dbc.Input(
@@ -840,6 +1119,16 @@ def create_app():
                                                 type="number", 
                                                 placeholder="e.g., 85",
                                                 value=85,
+                                                min=40, 
+                                                max=120,
+                                                className="mb-3"
+                                            ),
+                                            dbc.Label("High VR Temperature Alert (°C):", className="mb-2"),
+                                            dbc.Input(
+                                                id="vrtemp-high-threshold", 
+                                                type="number", 
+                                                placeholder="e.g., 75",
+                                                value=75,
                                                 min=40, 
                                                 max=120,
                                                 className="mb-3"
@@ -1122,6 +1411,7 @@ def create_app():
             dash.dependencies.Input('test-telegram-btn', 'n_clicks')
         ],        [
             dash.dependencies.State('temp-high-threshold', 'value'),
+            dash.dependencies.State('vrtemp-high-threshold', 'value'),
             dash.dependencies.State('hashrate-low-threshold', 'value'),
             dash.dependencies.State('hashrate-high-threshold', 'value'),
             dash.dependencies.State('power-high-threshold', 'value'),
@@ -1129,7 +1419,7 @@ def create_app():
             dash.dependencies.State('telegram-token', 'value'),
             dash.dependencies.State('telegram-chat-id', 'value')        ]
     )
-    def handle_settings_actions(save_clicks, test_clicks, temp_high, 
+    def handle_settings_actions(save_clicks, test_clicks, temp_high, vrtemp_high,
                                hashrate_low, hashrate_high, power_high,
                                alert_interval, telegram_token, telegram_chat_id):
         """Handle settings save and telegram test actions."""
@@ -1143,9 +1433,9 @@ def create_app():
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
         
         if button_id == 'save-settings-btn' and save_clicks:
-            try:
-                # Save settings to database
+            try:                # Save settings to database
                 Settings.set_setting('temp_high_threshold', temp_high or 85)
+                Settings.set_setting('vrtemp_high_threshold', vrtemp_high or 75)
                 Settings.set_setting('hashrate_low_threshold', hashrate_low or 400)
                 Settings.set_setting('hashrate_high_threshold', hashrate_high or 800)
                 Settings.set_setting('power_high_threshold', power_high or 15)
@@ -1218,9 +1508,9 @@ def create_app():
         raise PreventUpdate
 
     # Load settings callback
-    @dash_app.callback(
-        [
+    @dash_app.callback(        [
             dash.dependencies.Output('temp-high-threshold', 'value'),
+            dash.dependencies.Output('vrtemp-high-threshold', 'value'),
             dash.dependencies.Output('hashrate-low-threshold', 'value'),
             dash.dependencies.Output('hashrate-high-threshold', 'value'),
             dash.dependencies.Output('power-high-threshold', 'value'),
@@ -1235,6 +1525,7 @@ def create_app():
         if active_tab == "settings-dashboard":
             try:
                 temp_high = float(Settings.get_setting('temp_high_threshold', 85))
+                vrtemp_high = float(Settings.get_setting('vrtemp_high_threshold', 75))
                 hashrate_low = float(Settings.get_setting('hashrate_low_threshold', 400))
                 hashrate_high = float(Settings.get_setting('hashrate_high_threshold', 800))
                 power_high = float(Settings.get_setting('power_high_threshold', 15))
@@ -1242,14 +1533,14 @@ def create_app():
                 telegram_token = Settings.get_setting('telegram_token', '')
                 telegram_chat_id = Settings.get_setting('telegram_chat_id', '')
                 
-                return temp_high, hashrate_low, hashrate_high, power_high, alert_interval, telegram_token, telegram_chat_id
+                return temp_high, vrtemp_high, hashrate_low, hashrate_high, power_high, alert_interval, telegram_token, telegram_chat_id
             except Exception as e:
                 logger.error(f"Error loading settings: {str(e)}")
                 # Return default values if loading fails
-                return 85, 400, 800, 15, 5, '', ''
+                return 85, 75, 400, 800, 15, 5, '', ''
         
         # Return default values for other tabs to prevent callback errors
-        return 85, 400, 800, 15, 5, '', ''
+        return 85, 75, 400, 800, 15, 5, '', ''
 
     # Add custom CSS for better tab visibility
     dash_app.index_string = '''
@@ -1315,8 +1606,132 @@ def create_app():
     </html>
     '''
     
+    # Alert monitoring system
+    def send_telegram_alert(message, telegram_token=None, telegram_chat_id=None):
+        """Send alert message via Telegram."""
+        try:
+            if not telegram_token:
+                telegram_token = Settings.get_setting('telegram_token')
+            if not telegram_chat_id:
+                telegram_chat_id = Settings.get_setting('telegram_chat_id')
+            
+            if not telegram_token or not telegram_chat_id:
+                logger.warning("Telegram credentials not configured for alerts")
+                return False
+            
+            import requests
+            url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+            
+            response = requests.post(url, json={
+                'chat_id': telegram_chat_id,
+                'text': message,
+                'parse_mode': 'Markdown'
+            }, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info(f"Telegram alert sent successfully: {message}")
+                return True
+            else:
+                logger.error(f"Failed to send Telegram alert: {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error sending Telegram alert: {str(e)}")
+            return False
+    
+    def check_thresholds():
+        """Check latest data against configured thresholds and send alerts."""
+        try:
+            # Get latest data
+            latest_data = MinerData.query.order_by(MinerData.timestamp.desc()).first()
+            if not latest_data:
+                return
+            
+            # Get threshold settings
+            temp_high = float(Settings.get_setting('temp_high_threshold', 85))
+            vrtemp_high = float(Settings.get_setting('vrtemp_high_threshold', 75))
+            hashrate_low = float(Settings.get_setting('hashrate_low_threshold', 400))
+            hashrate_high = float(Settings.get_setting('hashrate_high_threshold', 800))
+            power_high = float(Settings.get_setting('power_high_threshold', 15))
+            
+            alerts = []
+            
+            # Check temperature thresholds
+            if latest_data.temp and latest_data.temp > temp_high:
+                alerts.append(f"🌡️ **High Temperature Alert**\n"
+                             f"Current: {latest_data.temp:.1f}°C\n"
+                             f"Threshold: {temp_high}°C")
+            
+            # Check VR temperature thresholds
+            if latest_data.vrTemp and latest_data.vrTemp > vrtemp_high:
+                alerts.append(f"🔥 **High VR Temperature Alert**\n"
+                             f"Current: {latest_data.vrTemp:.1f}°C\n"
+                             f"Threshold: {vrtemp_high}°C")
+            
+            # Check hash rate thresholds
+            if latest_data.hashRate and latest_data.hashRate < hashrate_low:
+                alerts.append(f"📉 **Low Hash Rate Alert**\n"
+                             f"Current: {latest_data.hashRate:.1f} GH/s\n"
+                             f"Threshold: {hashrate_low} GH/s")
+            
+            if latest_data.hashRate and latest_data.hashRate > hashrate_high:
+                alerts.append(f"📈 **High Hash Rate Alert**\n"
+                             f"Current: {latest_data.hashRate:.1f} GH/s\n"
+                             f"Threshold: {hashrate_high} GH/s")
+            
+            # Check power thresholds
+            if latest_data.power and latest_data.power > power_high:
+                alerts.append(f"⚡️ **High Power Alert**\n"
+                             f"Current: {latest_data.power:.1f}W\n"
+                             f"Threshold: {power_high}W")
+            
+            # Send alerts if any thresholds are violated
+            if alerts:
+                hostname = latest_data.hostname or "Unknown"
+                timestamp = latest_data.timestamp.strftime("%Y-%m-%d %H:%M:%S") if latest_data.timestamp else "Unknown"
+                
+                message = f"🚨 **BitAxe Alert - {hostname}**\n"
+                message += f"Time: {timestamp}\n\n"
+                message += "\n\n".join(alerts)
+                
+                send_telegram_alert(message)
+                logger.warning(f"Threshold violations detected: {len(alerts)} alerts sent")
+            
+        except Exception as e:
+            logger.error(f"Error checking thresholds: {str(e)}")
+    
+    def start_monitoring():
+        """Start the background monitoring system."""
+        try:
+            import threading
+            import time
+            
+            def monitoring_loop():
+                while True:
+                    try:
+                        with app.app_context():
+                            check_thresholds()
+                        
+                        # Get alert interval from settings (default 5 minutes)
+                        alert_interval = int(Settings.get_setting('alert_interval', 5))
+                        time.sleep(alert_interval * 60)  # Convert minutes to seconds
+                        
+                    except Exception as e:
+                        logger.error(f"Error in monitoring loop: {str(e)}")
+                        time.sleep(60)  # Wait 1 minute before retrying
+            
+            # Start monitoring in background thread
+            monitor_thread = threading.Thread(target=monitoring_loop, daemon=True)
+            monitor_thread.start()
+            logger.info("Background monitoring system started")
+        except Exception as e:
+            logger.error(f"Failed to start monitoring system: {str(e)}")
     return app
 
+    # Add monitoring methods to app instance
+    app.send_telegram_alert = send_telegram_alert
+    app.check_thresholds = check_thresholds  
+    app.start_monitoring = start_monitoring
 
 if __name__ == '__main__':
     print("🚀 Starting Enhanced BitAxe Dashboard...")
@@ -1357,14 +1772,18 @@ if __name__ == '__main__':
     with app.app_context():
         try:
             # Count data points if table exists
-            result = db.session.execute('SELECT COUNT(*) FROM miner_data')
+            result = db.session.execute(text('SELECT COUNT(*) FROM miner_data'))
             data_count = result.scalar() or 0
         except Exception:
-            data_count = 0
-    
-    # Run the development server
+            data_count = 0    # Run the development server
     debug_mode = os.getenv('DEBUG', 'False').lower() == 'true'
     print(f"🚀 Starting server (Debug: {debug_mode})...")
+    
+    # Start background monitoring system
+    try:
+        start_monitoring_global(app)
+    except Exception as e:
+        print(f"⚠️ Failed to start monitoring: {str(e)}")
     
     try:
         app.run(
