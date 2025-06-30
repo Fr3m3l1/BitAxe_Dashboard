@@ -493,7 +493,7 @@ def create_app():
         url_base_pathname='/dashboard/',
         external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.FONT_AWESOME]    )
     
-    # Custom CSS for dropdown styling
+    # Custom CSS for dropdown styling with elegant overflow handling
     dash_app.index_string = '''
     <!DOCTYPE html>
     <html>
@@ -508,6 +508,7 @@ def create_app():
                     background-color: white !important;
                     color: black !important;
                     border: 1px solid #ccc !important;
+                    border-radius: 4px !important;
                 }
                 .Select-control .Select-value {
                     color: black !important;
@@ -517,10 +518,15 @@ def create_app():
                 }
                 .Select-menu {
                     background-color: white !important;
+                    z-index: 999999 !important;
+                    border: 1px solid #ccc !important;
+                    border-radius: 4px !important;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
                 }
                 .Select-option {
                     background-color: white !important;
                     color: black !important;
+                    padding: 8px 12px !important;
                 }
                 .Select-option:hover {
                     background-color: #f8f9fa !important;
@@ -530,10 +536,12 @@ def create_app():
                     background-color: #007bff !important;
                     color: white !important;
                 }
+                
                 /* For newer React Select versions */
                 div[class*="control"] {
                     background-color: white !important;
                     border: 1px solid #ccc !important;
+                    border-radius: 4px !important;
                 }
                 div[class*="singleValue"] {
                     color: black !important;
@@ -543,37 +551,80 @@ def create_app():
                 }
                 div[class*="menu"] {
                     background-color: white !important;
+                    z-index: 999999 !important;
+                    border: 1px solid #ccc !important;
+                    border-radius: 4px !important;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
                 }
                 div[class*="option"] {
                     background-color: white !important;
                     color: black !important;
+                    padding: 8px 12px !important;
                 }
                 div[class*="option"]:hover {
                     background-color: #f8f9fa !important;
                     color: black !important;
                 }
-                /* Specific styling for analysis dropdowns */
-                .analysis-dropdown .Select-control {
-                    background-color: white !important;
-                    color: black !important;
-                    border: 1px solid #ccc !important;
+                
+                /* Analysis tab card styling with proper overflow handling */
+                .analysis-card {
+                    overflow: visible !important;
+                    z-index: 100 !important;
+                    position: relative !important;
                 }
-                .analysis-dropdown .Select-value-label {
-                    color: black !important;
+                
+                /* Analysis dropdown containers */
+                .analysis-dropdown {
+                    z-index: 1000 !important;
+                    position: relative !important;
                 }
-                .analysis-dropdown .Select-placeholder {
-                    color: #666 !important;
+                
+                /* Force dropdown menus to appear above everything */
+                .Select-menu-outer,
+                .Select-menu {
+                    z-index: 999999 !important;
+                    position: absolute !important;
                 }
+                
+                /* Ensure cards don't clip dropdown menus */
+                .card {
+                    overflow: visible !important;
+                }
+                .card-body {
+                    overflow: visible !important;
+                }
+                
                 /* For Dash components specifically */
                 ._dash-dropdown .Select-control {
                     background-color: white !important;
                     color: black !important;
+                    border-radius: 4px !important;
                 }
                 ._dash-dropdown .Select-value {
                     color: black !important;
                 }
                 ._dash-dropdown .Select-input input {
                     color: black !important;
+                }
+                ._dash-dropdown .Select-menu {
+                    z-index: 999999 !important;
+                }
+                
+                /* Portal-style positioning for dropdown menus */
+                .dash-dropdown .Select-menu,
+                .dash-dropdown .Select-menu-outer {
+                    z-index: 999999 !important;
+                    position: fixed !important;
+                }
+                
+                /* Modern styling for analysis cards */
+                .analysis-dropdown .Select-control {
+                    border-radius: 8px !important;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+                }
+                .analysis-dropdown .Select-menu {
+                    border-radius: 8px !important;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
                 }
             </style>
         </head>
@@ -1007,6 +1058,16 @@ def create_app():
                 dbc.Row([
                     dbc.Col([
                         dbc.Card([
+                            dbc.CardHeader("📈 Custom Variable Analysis"),
+                            dbc.CardBody([
+                                dcc.Graph(id="analysis-chart", style={'height': '500px'})
+                            ])
+                        ])
+                    ], width=12, className="mb-3")]),
+
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
                             dbc.CardHeader("📊 Variable Selection"),
                             dbc.CardBody([
                                 dbc.Row([
@@ -1086,17 +1147,7 @@ def create_app():
                             ])
                         ], className="mb-3")
                     ], width=12)
-                ]),
-                
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardHeader("📈 Custom Variable Analysis"),
-                            dbc.CardBody([
-                                dcc.Graph(id="analysis-chart", style={'height': '500px'})
-                            ])
-                        ])
-                    ], width=12)                ])
+                ])
             ])
         
         elif active_tab == "settings-dashboard":
