@@ -332,6 +332,57 @@ def create_app():
             db.session.commit()
             return setting
     
+    class HotModeStatus(db.Model):
+        __tablename__ = 'hot_mode_status'
+        id = db.Column(db.Integer, primary_key=True)
+        is_hot_mode = db.Column(db.Boolean, default=False)
+        last_warning_time = db.Column(db.DateTime)
+        last_normal_time = db.Column(db.DateTime)
+        updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+        
+        @staticmethod
+        def get_status():
+            """Get current hot mode status."""
+            status = HotModeStatus.query.first()
+            if not status:
+                status = HotModeStatus(is_hot_mode=False)
+                db.session.add(status)
+                db.session.commit()
+            return status
+        
+        @staticmethod
+        def set_hot_mode(is_hot=True):
+            """Set hot mode status."""
+            status = HotModeStatus.get_status()
+            status.is_hot_mode = is_hot
+            if is_hot:
+                status.last_warning_time = datetime.now(timezone.utc)
+            else:
+                status.last_normal_time = datetime.now(timezone.utc)
+            status.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+            return status
+        
+        @staticmethod
+        def should_reset_to_normal():
+            """Check if enough time has passed to reset to normal mode."""
+            status = HotModeStatus.get_status()
+            if not status.is_hot_mode or not status.last_warning_time:
+                return False
+            
+            reset_minutes = int(Settings.get_setting('hot_mode_reset_time', '30'))
+            
+            # Ensure both datetimes are timezone-aware for comparison
+            current_time = datetime.now(timezone.utc)
+            last_warning = status.last_warning_time
+            
+            # If last_warning_time is timezone-naive, assume it's UTC
+            if last_warning.tzinfo is None:
+                last_warning = last_warning.replace(tzinfo=timezone.utc)
+            
+            time_since_warning = current_time - last_warning
+            return time_since_warning.total_seconds() > (reset_minutes * 60)
+    
     @login_manager.user_loader
     def load_user(user_id):
         return User.query.get(int(user_id))
@@ -372,7 +423,7 @@ def create_app():
     
     def login_form(error_msg=None):
         """Generate a simple HTML login form."""
-        error_html = f'<div style="color: red; margin-bottom: 10px;">{error_msg}</div>' if error_msg else ''
+        error_html = f'<div class="error-message">{error_msg}</div>' if error_msg else ''
         
         return f"""
         <!DOCTYPE html>
@@ -380,41 +431,164 @@ def create_app():
         <head>
             <title>BitAxe Dashboard - Login</title>
             <style>
-                body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                       margin: 0; padding: 0; height: 100vh; display: flex; align-items: center; justify-content: center; }}
-                .login-container {{ background: rgba(255,255,255,0.1); padding: 40px; border-radius: 15px; 
-                                  backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); 
-                                  box-shadow: 0 8px 32px rgba(0,0,0,0.3); }}
-                .login-form {{ max-width: 300px; }}
-                h1 {{ color: white; text-align: center; margin-bottom: 30px; }}                .form-group {{ margin-bottom: 20px; }}
-                label {{ display: block; color: white; margin-bottom: 5px; }}
-                input[type="password"] {{ width: 100%; padding: 10px; border: none; 
-                                        border-radius: 5px; background: rgba(255,255,255,0.2); 
-                                        color: white; }}
-                input[type="password"]::placeholder {{ color: rgba(255,255,255,0.7); }}
-                input[type="submit"] {{ width: 100%; padding: 12px; background: #007bff; color: white; 
-                                      border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }}
-                input[type="submit"]:hover {{ background: #0056b3; }}
-                .checkbox-group {{ display: flex; align-items: center; color: white; }}
-                .checkbox-group input {{ margin-right: 8px; }}
+                * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                body {{ 
+                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+                    margin: 0; padding: 0; height: 100vh; 
+                    display: flex; align-items: center; justify-content: center;
+                    position: relative;
+                    overflow: hidden;
+                }}
+                body::before {{
+                    content: '';
+                    position: absolute;
+                    width: 500px;
+                    height: 500px;
+                    background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
+                    top: -200px;
+                    right: -200px;
+                    animation: pulse 8s ease-in-out infinite;
+                }}
+                body::after {{
+                    content: '';
+                    position: absolute;
+                    width: 400px;
+                    height: 400px;
+                    background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, transparent 70%);
+                    bottom: -150px;
+                    left: -150px;
+                    animation: pulse 10s ease-in-out infinite;
+                }}
+                @keyframes pulse {{
+                    0%, 100% {{ transform: scale(1); opacity: 0.5; }}
+                    50% {{ transform: scale(1.1); opacity: 0.8; }}
+                }}
+                .login-container {{ 
+                    background: rgba(30, 41, 59, 0.8);
+                    padding: 48px;
+                    border-radius: 24px;
+                    backdrop-filter: blur(20px);
+                    border: 1px solid rgba(59, 130, 246, 0.2);
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+                    position: relative;
+                    z-index: 1;
+                    max-width: 420px;
+                    width: 100%;
+                    transition: all 0.3s ease;
+                }}
+                .login-container:hover {{
+                    transform: translateY(-4px);
+                    box-shadow: 0 24px 70px rgba(59, 130, 246, 0.2);
+                    border-color: rgba(59, 130, 246, 0.4);
+                }}
+                .login-form {{ width: 100%; }}
+                h1 {{ 
+                    color: white;
+                    text-align: center;
+                    margin-bottom: 12px;
+                    font-size: 2rem;
+                    font-weight: 700;
+                    background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    background-clip: text;
+                }}
+                .subtitle {{
+                    text-align: center;
+                    color: #94a3b8;
+                    margin-bottom: 36px;
+                    font-size: 0.95rem;
+                }}
+                .form-group {{ margin-bottom: 24px; }}
+                label {{ 
+                    display: block;
+                    color: #cbd5e1;
+                    margin-bottom: 8px;
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                }}
+                input[type="password"] {{ 
+                    width: 100%;
+                    padding: 14px 16px;
+                    border: 1px solid rgba(59, 130, 246, 0.3);
+                    border-radius: 12px;
+                    background: rgba(15, 23, 42, 0.6);
+                    color: #e2e8f0;
+                    font-size: 1rem;
+                    transition: all 0.3s ease;
+                    outline: none;
+                }}
+                input[type="password"]:focus {{ 
+                    background: rgba(15, 23, 42, 0.8);
+                    border-color: #3b82f6;
+                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+                }}
+                input[type="password"]::placeholder {{ 
+                    color: #64748b;
+                }}
+                input[type="submit"] {{ 
+                    width: 100%;
+                    padding: 14px;
+                    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 12px;
+                    cursor: pointer;
+                    font-size: 1rem;
+                    font-weight: 600;
+                    transition: all 0.3s ease;
+                    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+                }}
+                input[type="submit"]:hover {{ 
+                    transform: translateY(-2px);
+                    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+                }}
+                input[type="submit"]:active {{
+                    transform: translateY(0);
+                }}
+                .checkbox-group {{ 
+                    display: flex;
+                    align-items: center;
+                    color: #cbd5e1;
+                    font-size: 0.9rem;
+                }}
+                .checkbox-group input {{ 
+                    margin-right: 8px;
+                    width: 18px;
+                    height: 18px;
+                    cursor: pointer;
+                    accent-color: #3b82f6;
+                }}
+                .error-message {{
+                    background: rgba(248, 113, 113, 0.15);
+                    color: #f87171;
+                    padding: 12px 16px;
+                    border-radius: 12px;
+                    margin-bottom: 24px;
+                    border-left: 4px solid #ef4444;
+                    font-size: 0.9rem;
+                }}
             </style>
         </head>
         <body>
             <div class="login-container">
                 <div class="login-form">
                     <h1>🚀 BitAxe Dashboard</h1>
-                    {error_html}                    <form method="post">
+                    <p class="subtitle">Bitcoin Mining Monitoring System</p>
+                    {error_html if error_html else ''}
+                    <form method="post">
                         <div class="form-group">
-                            <label for="password">Access Code:</label>
-                            <input type="password" id="password" name="password" required placeholder="Enter access code">
+                            <label for="password">Access Code</label>
+                            <input type="password" id="password" name="password" required placeholder="Enter your access code">
                         </div>
                         <div class="form-group">
                             <label class="checkbox-group">
-                                <input type="checkbox" name="remember"> Remember me
+                                <input type="checkbox" name="remember"> Remember me on this device
                             </label>
                         </div>
                         <div class="form-group">
-                            <input type="submit" value="Login">
+                            <input type="submit" value="Sign In">
                         </div>
                     </form>
                 </div>
@@ -438,7 +612,31 @@ def create_app():
         return redirect(url_for('login'))
     
     # API routes
-    @app.route('/api/data', methods=['POST'])
+    def check_and_update_hot_mode(miner_data):
+        """Check if hot mode should be activated based on temperature data."""
+        try:
+            temp_high_threshold = float(Settings.get_setting('temp_high_threshold', 85))
+            vrtemp_high_threshold = float(Settings.get_setting('vrtemp_high_threshold', 75))
+            
+            # Check if any temperature exceeds thresholds
+            temp_alert = miner_data.temp and miner_data.temp > temp_high_threshold
+            vrtemp_alert = miner_data.vrTemp and miner_data.vrTemp > vrtemp_high_threshold
+            
+            if temp_alert or vrtemp_alert:
+                # Activate hot mode if temperature alerts are triggered
+                HotModeStatus.set_hot_mode(True)
+                logger.info(f"Hot mode activated due to high temperature: temp={miner_data.temp}°C, vrTemp={miner_data.vrTemp}°C")
+            else:
+                # Check if we should reset to normal mode
+                status = HotModeStatus.get_status()
+                if status.should_reset_to_normal():
+                    HotModeStatus.set_hot_mode(False)
+                    logger.info("Hot mode deactivated - no temperature warnings for sufficient time")
+                    
+        except Exception as e:
+            logger.error(f"Error checking hot mode status: {str(e)}")
+    
+    @app.route('/api/input', methods=['POST'])
     def receive_data():
         """Enhanced API endpoint for receiving miner data."""
         try:
@@ -465,6 +663,9 @@ def create_app():
             db.session.add(miner_data)
             db.session.commit()
             
+            # Check if hot mode should be activated based on temperature thresholds
+            check_and_update_hot_mode(miner_data)
+            
             logger.info(f"Received and saved miner data from {miner_data.hostname or 'Unknown'}")
             return jsonify({'message': 'Data saved successfully', 'id': miner_data.id}), 200
             
@@ -486,6 +687,79 @@ def create_app():
             logger.error(f"Error fetching latest data: {str(e)}")
             return jsonify({'error': 'Internal server error'}), 500
     
+    @app.route('/api/settings', methods=['GET'])
+    def get_hot_mode_settings():
+        """Get hot mode settings if hot mode is currently active."""
+        try:
+            status = HotModeStatus.get_status()
+            
+            # Check if we should reset to normal mode
+            if status.should_reset_to_normal():
+                HotModeStatus.set_hot_mode(False)
+                status = HotModeStatus.get_status()
+            
+            if not status.is_hot_mode:
+                cold_settings = {
+                    'hot_mode_active': False,
+                    'frequency_mhz': int(Settings.get_setting('normal_frequency', '485')),
+                    'core_voltage_mv': int(Settings.get_setting('normal_core_voltage', '1200')),
+                    'last_warning_time': None,
+                    'reset_time_minutes': int(Settings.get_setting('hot_mode_reset_time', '30'))
+                }
+                return jsonify(cold_settings), 200
+            
+            else:
+                # Ensure last_warning_time is timezone-aware for serialization
+                last_warning_time = status.last_warning_time
+                if last_warning_time and last_warning_time.tzinfo is None:
+                    last_warning_time = last_warning_time.replace(tzinfo=timezone.utc)
+                
+                hot_settings = {
+                    'hot_mode_active': True,
+                    'frequency_mhz': int(Settings.get_setting('hot_frequency', '400')),
+                    'core_voltage_mv': int(Settings.get_setting('hot_core_voltage', '1100')),
+                    'last_warning_time': last_warning_time.isoformat() if last_warning_time else None,
+                    'reset_time_minutes': int(Settings.get_setting('hot_mode_reset_time', '30'))
+                }
+                
+                return jsonify(hot_settings), 200
+            
+        except Exception as e:
+            logger.error(f"Error fetching hot mode settings: {str(e)}")
+            return jsonify({'error': 'Internal server error'}), 500
+    
+    @app.route('/api/performance-settings', methods=['GET'])
+    def get_performance_settings():
+        """Get current performance settings (normal or hot mode)."""
+        try:
+            status = HotModeStatus.get_status()
+            
+            # Check if we should reset to normal mode
+            if status.should_reset_to_normal():
+                HotModeStatus.set_hot_mode(False)
+                status = HotModeStatus.get_status()
+            
+            if status.is_hot_mode:
+                settings = {
+                    'mode': 'hot',
+                    'frequency_mhz': int(Settings.get_setting('hot_frequency', '400')),
+                    'core_voltage_mv': int(Settings.get_setting('hot_core_voltage', '1100')),
+                    'reason': 'Temperature warning active'
+                }
+            else:
+                settings = {
+                    'mode': 'normal',
+                    'frequency_mhz': int(Settings.get_setting('normal_frequency', '485')),
+                    'core_voltage_mv': int(Settings.get_setting('normal_core_voltage', '1200')),
+                    'reason': 'Normal operation'
+                }
+            
+            return jsonify(settings), 200
+            
+        except Exception as e:
+            logger.error(f"Error fetching performance settings: {str(e)}")
+            return jsonify({'error': 'Internal server error'}), 500
+    
     # Create Dash app
     dash_app = dash.Dash(
         __name__,
@@ -503,128 +777,272 @@ def create_app():
             {%favicon%}
             {%css%}
             <style>
-                /* Custom styles for Dash dropdowns */
-                .Select-control {
-                    background-color: white !important;
-                    color: black !important;
-                    border: 1px solid #ccc !important;
-                    border-radius: 4px !important;
+                /* Modern Dark Theme with Blue Accents */
+                body {
+                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+                    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%) !important;
+                    color: #e2e8f0 !important;
                 }
-                .Select-control .Select-value {
-                    color: black !important;
+                
+                /* Custom Tab Styling */
+                .nav-tabs {
+                    background: rgba(30, 41, 59, 0.6) !important;
+                    border-radius: 16px !important;
+                    padding: 8px !important;
+                    backdrop-filter: blur(20px) !important;
+                    border: 1px solid rgba(59, 130, 246, 0.2) !important;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
                 }
-                .Select-control .Select-placeholder {
-                    color: #666 !important;
+                .nav-tabs .nav-item .nav-link {
+                    color: #94a3b8 !important;
+                    background: transparent !important;
+                    border: none !important;
+                    border-radius: 12px !important;
+                    margin: 0 4px !important;
+                    font-weight: 600 !important;
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+                    padding: 12px 24px !important;
                 }
-                .Select-menu {
-                    background-color: white !important;
+                .nav-tabs .nav-item .nav-link:hover {
+                    background: rgba(59, 130, 246, 0.1) !important;
+                    color: #60a5fa !important;
+                    transform: translateY(-2px) !important;
+                }
+                .nav-tabs .nav-item .nav-link.active {
+                    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+                    color: white !important;
+                    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
+                }
+                
+                /* Modern Card Styling */
+                .card {
+                    background: rgba(30, 41, 59, 0.8) !important;
+                    backdrop-filter: blur(20px) !important;
+                    border: 1px solid rgba(59, 130, 246, 0.2) !important;
+                    border-radius: 20px !important;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
+                    overflow: visible !important;
+                    transition: all 0.3s ease !important;
+                }
+                .card:hover {
+                    transform: translateY(-4px) !important;
+                    box-shadow: 0 24px 70px rgba(59, 130, 246, 0.2) !important;
+                    border-color: rgba(59, 130, 246, 0.4) !important;
+                }
+                .card-header {
+                    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(37, 99, 235, 0.1) 100%) !important;
+                    border-bottom: 1px solid rgba(59, 130, 246, 0.2) !important;
+                    border-radius: 20px 20px 0 0 !important;
+                    font-weight: 700 !important;
+                    font-size: 1.1rem !important;
+                    color: #e2e8f0 !important;
+                    padding: 20px 24px !important;
+                }
+                .card-body {
+                    padding: 24px !important;
+                    overflow: visible !important;
+                    color: #cbd5e1 !important;
+                }
+                
+                /* Stats Cards */
+                .text-primary { color: #60a5fa !important; }
+                .text-warning { color: #fbbf24 !important; }
+                .text-success { color: #34d399 !important; }
+                .text-info { color: #22d3ee !important; }
+                .text-danger { color: #f87171 !important; }
+                .text-secondary { color: #a78bfa !important; }
+                .text-muted { color: #94a3b8 !important; }
+                .text-white { color: #f1f5f9 !important; }
+                .text-white-50 { color: rgba(241, 245, 249, 0.7) !important; }
+                
+                /* Buttons */
+                .btn {
+                    border-radius: 12px !important;
+                    font-weight: 600 !important;
+                    padding: 12px 28px !important;
+                    transition: all 0.3s ease !important;
+                    border: none !important;
+                }
+                .btn-success {
+                    background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+                    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3) !important;
+                }
+                .btn-success:hover {
+                    transform: translateY(-2px) !important;
+                    box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4) !important;
+                }
+                .btn-info {
+                    background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%) !important;
+                    box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3) !important;
+                }
+                .btn-info:hover {
+                    transform: translateY(-2px) !important;
+                    box-shadow: 0 6px 16px rgba(6, 182, 212, 0.4) !important;
+                }
+                .btn-outline-light {
+                    border: 2px solid rgba(241, 245, 249, 0.3) !important;
+                    color: #f1f5f9 !important;
+                    background: transparent !important;
+                }
+                .btn-outline-light:hover {
+                    background: rgba(241, 245, 249, 0.1) !important;
+                    border-color: #f1f5f9 !important;
+                    transform: translateY(-2px) !important;
+                }
+                
+                /* Form Controls */
+                .form-control, .form-select, input[type="number"], input[type="text"], input[type="password"] {
+                    background: rgba(15, 23, 42, 0.6) !important;
+                    border: 1px solid rgba(59, 130, 246, 0.3) !important;
+                    border-radius: 12px !important;
+                    color: #e2e8f0 !important;
+                    padding: 12px 16px !important;
+                    transition: all 0.3s ease !important;
+                }
+                .form-control:focus, .form-select:focus, input:focus {
+                    background: rgba(15, 23, 42, 0.8) !important;
+                    border-color: #3b82f6 !important;
+                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
+                    color: #f1f5f9 !important;
+                    outline: none !important;
+                }
+                .form-control::placeholder {
+                    color: #64748b !important;
+                }
+                .form-label, label {
+                    color: #cbd5e1 !important;
+                    font-weight: 600 !important;
+                    margin-bottom: 8px !important;
+                }
+                
+                /* Dropdown Styling */
+                .Select-control, div[class*="control"] {
+                    background: rgba(15, 23, 42, 0.8) !important;
+                    border: 1px solid rgba(59, 130, 246, 0.3) !important;
+                    border-radius: 12px !important;
+                    min-height: 46px !important;
+                }
+                .Select-control:hover, div[class*="control"]:hover {
+                    border-color: #3b82f6 !important;
+                }
+                .Select-value, div[class*="singleValue"] {
+                    color: #e2e8f0 !important;
+                }
+                .Select-placeholder, div[class*="placeholder"] {
+                    color: #64748b !important;
+                }
+                .Select-menu, div[class*="menu"] {
+                    background: rgba(30, 41, 59, 0.98) !important;
+                    backdrop-filter: blur(20px) !important;
+                    border: 1px solid rgba(59, 130, 246, 0.3) !important;
+                    border-radius: 12px !important;
+                    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5) !important;
                     z-index: 999999 !important;
-                    border: 1px solid #ccc !important;
-                    border-radius: 4px !important;
-                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
                 }
-                .Select-option {
-                    background-color: white !important;
-                    color: black !important;
-                    padding: 8px 12px !important;
+                .Select-option, div[class*="option"] {
+                    background: transparent !important;
+                    color: #cbd5e1 !important;
+                    padding: 12px 16px !important;
+                    transition: all 0.2s ease !important;
                 }
-                .Select-option:hover {
-                    background-color: #f8f9fa !important;
-                    color: black !important;
+                .Select-option:hover, div[class*="option"]:hover {
+                    background: rgba(59, 130, 246, 0.2) !important;
+                    color: #f1f5f9 !important;
                 }
                 .Select-option.is-selected {
-                    background-color: #007bff !important;
+                    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
                     color: white !important;
                 }
                 
-                /* For newer React Select versions */
-                div[class*="control"] {
-                    background-color: white !important;
-                    border: 1px solid #ccc !important;
-                    border-radius: 4px !important;
-                }
-                div[class*="singleValue"] {
-                    color: black !important;
-                }
-                div[class*="placeholder"] {
-                    color: #666 !important;
-                }
-                div[class*="menu"] {
-                    background-color: white !important;
-                    z-index: 999999 !important;
-                    border: 1px solid #ccc !important;
-                    border-radius: 4px !important;
-                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
-                }
-                div[class*="option"] {
-                    background-color: white !important;
-                    color: black !important;
-                    padding: 8px 12px !important;
-                }
-                div[class*="option"]:hover {
-                    background-color: #f8f9fa !important;
-                    color: black !important;
-                }
-                
-                /* Analysis tab card styling with proper overflow handling */
-                .analysis-card {
-                    overflow: visible !important;
-                    z-index: 100 !important;
-                    position: relative !important;
-                }
-                
-                /* Analysis dropdown containers */
+                /* Analysis dropdown specific */
                 .analysis-dropdown {
                     z-index: 1000 !important;
                     position: relative !important;
                 }
-                
-                /* Force dropdown menus to appear above everything */
-                .Select-menu-outer,
-                .Select-menu {
+                .analysis-dropdown .Select-control, .analysis-dropdown div[class*="control"] {
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+                }
+                .Select-menu-outer, .Select-menu {
                     z-index: 999999 !important;
                     position: absolute !important;
                 }
-                
-                /* Ensure cards don't clip dropdown menus */
-                .card {
-                    overflow: visible !important;
-                }
-                .card-body {
-                    overflow: visible !important;
-                }
-                
-                /* For Dash components specifically */
-                ._dash-dropdown .Select-control {
-                    background-color: white !important;
-                    color: black !important;
-                    border-radius: 4px !important;
-                }
-                ._dash-dropdown .Select-value {
-                    color: black !important;
-                }
-                ._dash-dropdown .Select-input input {
-                    color: black !important;
-                }
-                ._dash-dropdown .Select-menu {
-                    z-index: 999999 !important;
-                }
-                
-                /* Portal-style positioning for dropdown menus */
-                .dash-dropdown .Select-menu,
-                .dash-dropdown .Select-menu-outer {
+                .dash-dropdown .Select-menu, .dash-dropdown .Select-menu-outer {
                     z-index: 999999 !important;
                     position: fixed !important;
                 }
                 
-                /* Modern styling for analysis cards */
-                .analysis-dropdown .Select-control {
-                    border-radius: 8px !important;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+                /* Alerts */
+                .alert {
+                    border-radius: 12px !important;
+                    border: none !important;
+                    padding: 16px 20px !important;
+                    font-weight: 500 !important;
                 }
-                .analysis-dropdown .Select-menu {
-                    border-radius: 8px !important;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+                .alert-success {
+                    background: rgba(16, 185, 129, 0.15) !important;
+                    color: #34d399 !important;
+                    border-left: 4px solid #10b981 !important;
+                }
+                .alert-info {
+                    background: rgba(6, 182, 212, 0.15) !important;
+                    color: #22d3ee !important;
+                    border-left: 4px solid #06b6d4 !important;
+                }
+                .alert-warning {
+                    background: rgba(251, 191, 36, 0.15) !important;
+                    color: #fbbf24 !important;
+                    border-left: 4px solid #f59e0b !important;
+                }
+                .alert-danger {
+                    background: rgba(248, 113, 113, 0.15) !important;
+                    color: #f87171 !important;
+                    border-left: 4px solid #ef4444 !important;
+                }
+                
+                /* Headings */
+                h1, h2, h3, h4, h5, h6 {
+                    color: #f1f5f9 !important;
+                    font-weight: 700 !important;
+                }
+                h1 {
+                    font-size: 2.5rem !important;
+                    background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    background-clip: text;
+                }
+                
+                /* Scrollbar */
+                ::-webkit-scrollbar {
+                    width: 12px;
+                    height: 12px;
+                }
+                ::-webkit-scrollbar-track {
+                    background: rgba(15, 23, 42, 0.5);
+                    border-radius: 10px;
+                }
+                ::-webkit-scrollbar-thumb {
+                    background: rgba(59, 130, 246, 0.5);
+                    border-radius: 10px;
+                    border: 2px solid rgba(15, 23, 42, 0.5);
+                }
+                ::-webkit-scrollbar-thumb:hover {
+                    background: rgba(59, 130, 246, 0.7);
+                }
+                
+                /* Animations */
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(20px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+                .card {
+                    animation: fadeInUp 0.5s ease-out;
                 }
             </style>
         </head>
@@ -645,7 +1063,7 @@ def create_app():
             dbc.Tab(label="📊 Main Dashboard", tab_id="main-dashboard"),
             dbc.Tab(label="📈 Analysis", tab_id="analysis-dashboard"),
             dbc.Tab(label="⚙️ Settings", tab_id="settings-dashboard")
-        ], id="tabs", active_tab="main-dashboard", className="mb-3"),
+        ], id="tabs", active_tab="main-dashboard", className="mb-4"),
         
         # Content area
         html.Div(id="tab-content"),
@@ -653,13 +1071,13 @@ def create_app():
         # Common elements
         html.Div([
             dbc.Button("Logout", href="/logout", color="outline-light", className="me-2"),
-        ], className="text-center mt-4"),
+        ], className="text-center mt-5"),
         
         dcc.Interval(id='interval-component', interval=30*1000, n_intervals=0)
     ], fluid=True, style={
-        'background': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        'background': 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)',
         'min-height': '100vh',
-        'padding': '20px'
+        'padding': '32px'
     })
     
     @dash_app.callback(
@@ -984,7 +1402,12 @@ def create_app():
             'power_high_threshold': '15',
             'alert_interval': '5',
             'telegram_token': '',
-            'telegram_chat_id': ''
+            'telegram_chat_id': '',
+            'normal_frequency': '485',
+            'normal_core_voltage': '1200',
+            'hot_frequency': '400',
+            'hot_core_voltage': '1100',
+            'hot_mode_reset_time': '30'
         }
         
         for key, value in default_settings.items():
@@ -1266,6 +1689,78 @@ def create_app():
                                         ], width=6)
                                     ]),
                                     
+                                    # Frequency and Core Voltage Settings
+                                    html.H5("BitAxe Performance Settings", className="text-secondary mb-3"),
+                                    dbc.Row([
+                                        dbc.Col([
+                                            html.H6("Normal Mode Settings", className="text-success mb-2"),
+                                            dbc.Label("Normal Frequency (MHz):", className="mb-2"),
+                                            dbc.Input(
+                                                id="normal-frequency", 
+                                                type="number", 
+                                                placeholder="e.g., 485",
+                                                value=485,
+                                                min=100, 
+                                                max=1000,
+                                                step=5,
+                                                className="mb-3"
+                                            ),
+                                            dbc.Label("Normal Core Voltage (mV):", className="mb-2"),
+                                            dbc.Input(
+                                                id="normal-core-voltage", 
+                                                type="number", 
+                                                placeholder="e.g., 1200",
+                                                value=1200,
+                                                min=800, 
+                                                max=3000,
+                                                step=10,
+                                                className="mb-3"
+                                            )
+                                        ], width=6),
+                                        
+                                        dbc.Col([
+                                            html.H6("Hot Mode Settings (When Temperature Alert)", className="text-danger mb-2"),
+                                            dbc.Label("Hot Mode Frequency (MHz):", className="mb-2"),
+                                            dbc.Input(
+                                                id="hot-frequency", 
+                                                type="number", 
+                                                placeholder="e.g., 400",
+                                                value=400,
+                                                min=100, 
+                                                max=1000,
+                                                step=5,
+                                                className="mb-3"
+                                            ),
+                                            dbc.Label("Hot Mode Core Voltage (mV):", className="mb-2"),
+                                            dbc.Input(
+                                                id="hot-core-voltage", 
+                                                type="number", 
+                                                placeholder="e.g., 1100",
+                                                value=1100,
+                                                min=100, 
+                                                max=3000,
+                                                step=10,
+                                                className="mb-3"
+                                            )
+                                        ], width=6)
+                                    ]),
+                                    
+                                    dbc.Row([
+                                        dbc.Col([
+                                            dbc.Label("Reset to Normal After (minutes without warnings):", className="mb-2"),
+                                            dbc.Input(
+                                                id="hot-mode-reset-time", 
+                                                type="number", 
+                                                placeholder="e.g., 30",
+                                                value=30,
+                                                min=5, 
+                                                max=180,
+                                                step=5,
+                                                className="mb-3"
+                                            ),
+                                        ], width=12)
+                                    ]),
+                                    
                                     # Save and Test buttons
                                     dbc.Row([
                                         dbc.Col([
@@ -1468,11 +1963,18 @@ def create_app():
             dash.dependencies.State('power-high-threshold', 'value'),
             dash.dependencies.State('alert-interval', 'value'),
             dash.dependencies.State('telegram-token', 'value'),
-            dash.dependencies.State('telegram-chat-id', 'value')        ]
+            dash.dependencies.State('telegram-chat-id', 'value'),
+            dash.dependencies.State('normal-frequency', 'value'),
+            dash.dependencies.State('normal-core-voltage', 'value'),
+            dash.dependencies.State('hot-frequency', 'value'),
+            dash.dependencies.State('hot-core-voltage', 'value'),
+            dash.dependencies.State('hot-mode-reset-time', 'value')        ]
     )
     def handle_settings_actions(save_clicks, test_clicks, temp_high, vrtemp_high,
                                hashrate_low, hashrate_high, power_high,
-                               alert_interval, telegram_token, telegram_chat_id):
+                               alert_interval, telegram_token, telegram_chat_id,
+                               normal_frequency, normal_core_voltage,
+                               hot_frequency, hot_core_voltage, hot_mode_reset_time):
         """Handle settings save and telegram test actions."""
         import dash
         from dash.exceptions import PreventUpdate
@@ -1493,6 +1995,13 @@ def create_app():
                 Settings.set_setting('alert_interval', alert_interval or 5)
                 Settings.set_setting('telegram_token', telegram_token or '')
                 Settings.set_setting('telegram_chat_id', telegram_chat_id or '')
+                
+                # Save performance settings
+                Settings.set_setting('normal_frequency', normal_frequency or 485)
+                Settings.set_setting('normal_core_voltage', normal_core_voltage or 1200)
+                Settings.set_setting('hot_frequency', hot_frequency or 400)
+                Settings.set_setting('hot_core_voltage', hot_core_voltage or 1100)
+                Settings.set_setting('hot_mode_reset_time', hot_mode_reset_time or 30)
                 
                 logger.info("Settings saved successfully to database")
                 
@@ -1567,7 +2076,12 @@ def create_app():
             dash.dependencies.Output('power-high-threshold', 'value'),
             dash.dependencies.Output('alert-interval', 'value'),
             dash.dependencies.Output('telegram-token', 'value'),
-            dash.dependencies.Output('telegram-chat-id', 'value')
+            dash.dependencies.Output('telegram-chat-id', 'value'),
+            dash.dependencies.Output('normal-frequency', 'value'),
+            dash.dependencies.Output('normal-core-voltage', 'value'),
+            dash.dependencies.Output('hot-frequency', 'value'),
+            dash.dependencies.Output('hot-core-voltage', 'value'),
+            dash.dependencies.Output('hot-mode-reset-time', 'value')
         ],
         [dash.dependencies.Input('tabs', 'active_tab')]
     )
@@ -1584,14 +2098,24 @@ def create_app():
                 telegram_token = Settings.get_setting('telegram_token', '')
                 telegram_chat_id = Settings.get_setting('telegram_chat_id', '')
                 
-                return temp_high, vrtemp_high, hashrate_low, hashrate_high, power_high, alert_interval, telegram_token, telegram_chat_id
+                # Load performance settings
+                normal_frequency = int(Settings.get_setting('normal_frequency', 485))
+                normal_core_voltage = int(Settings.get_setting('normal_core_voltage', 1200))
+                hot_frequency = int(Settings.get_setting('hot_frequency', 400))
+                hot_core_voltage = int(Settings.get_setting('hot_core_voltage', 1100))
+                hot_mode_reset_time = int(Settings.get_setting('hot_mode_reset_time', 30))
+                
+                return (temp_high, vrtemp_high, hashrate_low, hashrate_high, power_high, 
+                       alert_interval, telegram_token, telegram_chat_id,
+                       normal_frequency, normal_core_voltage, hot_frequency, 
+                       hot_core_voltage, hot_mode_reset_time)
             except Exception as e:
                 logger.error(f"Error loading settings: {str(e)}")
                 # Return default values if loading fails
-                return 85, 75, 400, 800, 15, 5, '', ''
+                return 85, 75, 400, 800, 15, 5, '', '', 485, 1200, 400, 1100, 30
         
         # Return default values for other tabs to prevent callback errors
-        return 85, 75, 400, 800, 15, 5, '', ''
+        return 85, 75, 400, 800, 15, 5, '', '', 485, 1200, 400, 1100, 30
 
     # Add custom CSS for better tab visibility
     dash_app.index_string = '''

@@ -15,4 +15,4 @@ COPY . .
 EXPOSE 5000
 
 # Start the application
-CMD ["python", "src/app.py"]
+CMD ["python", "run.py"]
