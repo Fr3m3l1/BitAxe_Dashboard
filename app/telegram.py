@@ -31,5 +31,14 @@ def send(message: str) -> bool:
         resp.raise_for_status()
         return True
     except requests.RequestException as e:
-        logger.error("Telegram send failed: %s", e)
+        # Never log str(e) here: the request URL contains the bot token.
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        detail = ""
+        if getattr(e, "response", None) is not None:
+            try:
+                detail = e.response.json().get("description", "")
+            except ValueError:
+                pass
+        logger.error("Telegram send failed: %s %s (%s)",
+                     status or "network error", detail, type(e).__name__)
         return False
