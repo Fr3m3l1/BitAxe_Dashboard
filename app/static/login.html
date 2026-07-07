@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BitAxe Dashboard — Login</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏️</text></svg>">
+</head>
+<body>
+<div class="login-page">
+  <form class="login-card" id="login-form">
+    <h1><span style="color:var(--accent)">⛏</span> BitAxe Dashboard</h1>
+    <p>Enter your access code</p>
+    <input type="password" id="code" placeholder="••••" autofocus autocomplete="current-password">
+    <button class="btn primary" type="submit">Sign in</button>
+    <div class="login-error" id="error"></div>
+  </form>
+</div>
+<script>
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const res = await fetch('/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: document.getElementById('code').value }),
+  });
+  if (res.ok) { location.href = '/'; }
+  else { document.getElementById('error').textContent = 'Wrong access code'; }
+});
+</script>
+</body>
+</html>

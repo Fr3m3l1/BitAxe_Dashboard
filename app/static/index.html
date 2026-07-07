@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BitAxe Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏️</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header>
+  <div class="logo"><span class="coin">⛏</span> BitAxe Dashboard</div>
+  <div class="miner-chips" id="miner-chips"></div>
+  <div class="spacer"></div>
+  <span class="alerts-badge" id="alerts-badge" title="Alerts in the last 24h"></span>
+  <span id="last-update" style="color:var(--muted);font-size:12px"></span>
+  <button class="btn" id="logout-btn">Logout</button>
+</header>
+
+<nav>
+  <button data-tab="overview" class="active">Overview</button>
+  <button data-tab="alerts">Alerts</button>
+  <button data-tab="tuner">Auto-Tuner</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+
+<main>
+
+  <!-- ============ OVERVIEW ============ -->
+  <section class="tab active" id="tab-overview">
+    <div class="tiles" id="tiles"></div>
+
+    <div class="filter-row" id="range-row">
+      <button class="range-btn" data-hours="1">1h</button>
+      <button class="range-btn active" data-hours="6">6h</button>
+      <button class="range-btn" data-hours="12">12h</button>
+      <button class="range-btn" data-hours="24">24h</button>
+      <button class="range-btn" data-hours="72">3d</button>
+      <button class="range-btn" data-hours="168">7d</button>
+      <span class="hint" id="stats-hint"></span>
+    </div>
+
+    <div class="charts" id="charts">
+      <div class="chart-card"><h3>Hashrate (GH/s)</h3><div class="canvas-wrap"><canvas id="c-hashrate"></canvas></div></div>
+      <div class="chart-card"><h3>Temperature (°C)</h3><div class="canvas-wrap"><canvas id="c-temp"></canvas></div></div>
+      <div class="chart-card"><h3>Power (W)</h3><div class="canvas-wrap"><canvas id="c-power"></canvas></div></div>
+      <div class="chart-card"><h3>Efficiency (J/TH)</h3><div class="canvas-wrap"><canvas id="c-eff"></canvas></div></div>
+      <div class="chart-card"><h3>Frequency (MHz)</h3><div class="canvas-wrap"><canvas id="c-freq"></canvas></div></div>
+      <div class="chart-card"><h3>Core voltage (mV)</h3><div class="canvas-wrap"><canvas id="c-volt"></canvas></div></div>
+    </div>
+  </section>
+
+  <!-- ============ ALERTS ============ -->
+  <section class="tab" id="tab-alerts">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Miner</th><th>Severity</th><th>Type</th><th>Message</th></tr></thead>
+        <tbody id="alerts-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ TUNER ============ -->
+  <section class="tab" id="tab-tuner">
+    <div class="card">
+      <h2>Auto-tuner <span class="tuner-state-badge off" id="tuner-badge">off</span></h2>
+      <p class="desc">
+        The tuner runs on the local collector next to your miner. It hill-climbs frequency and
+        core voltage toward the best hashrate or efficiency, backs off before the temperature
+        limits, and downclocks immediately on overheat. Changes here are picked up by the
+        collector within a minute.
+      </p>
+      <div class="form-grid" id="tuner-form">
+        <div class="field check"><input type="checkbox" id="t_enabled"><label for="t_enabled">Enabled</label></div>
+        <div class="field"><label for="t_mode">Optimize for</label>
+          <select id="t_mode"><option value="efficiency">Efficiency (J/TH)</option><option value="hashrate">Hashrate (GH/s)</option></select></div>
+        <div class="field"><label for="t_target_temp">Target temp (°C)</label><input type="number" id="t_target_temp" step="1"></div>
+        <div class="field"><label for="t_max_temp">Max temp (°C)</label><input type="number" id="t_max_temp" step="1"></div>
+        <div class="field"><label for="t_max_vr_temp">Max VR temp (°C)</label><input type="number" id="t_max_vr_temp" step="1"></div>
+        <div class="field"><label for="t_max_power">Max power (W)</label><input type="number" id="t_max_power" step="0.5"></div>
+        <div class="field"><label for="t_freq_min">Min frequency (MHz)</label><input type="number" id="t_freq_min" step="5"></div>
+        <div class="field"><label for="t_freq_max">Max frequency (MHz)</label><input type="number" id="t_freq_max" step="5"></div>
+        <div class="field"><label for="t_freq_step">Frequency step (MHz)</label><input type="number" id="t_freq_step" step="5"></div>
+        <div class="field"><label for="t_volt_min">Min core voltage (mV)</label><input type="number" id="t_volt_min" step="5"></div>
+        <div class="field"><label for="t_volt_max">Max core voltage (mV)</label><input type="number" id="t_volt_max" step="5"></div>
+        <div class="field"><label for="t_volt_step">Voltage step (mV)</label><input type="number" id="t_volt_step" step="5"></div>
+        <div class="field"><label for="t_settle_seconds">Settle time (s)</label><input type="number" id="t_settle_seconds" step="30"></div>
+        <div class="field"><label for="t_dwell_seconds">Measure window (s)</label><input type="number" id="t_dwell_seconds" step="60"></div>
+        <div class="field check"><input type="checkbox" id="t_allow_restart"><label for="t_allow_restart">Allow restart to apply</label></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="save-tuner">Save tuner settings</button>
+        <span class="save-note" id="tuner-note">Saved ✓</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Tuner activity</h2>
+      <p class="desc">Every change the tuner made, with the reason.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Miner</th><th>Action</th><th class="num">Freq</th><th class="num">Volt</th><th>Reason</th></tr></thead>
+          <tbody id="tuner-events-body"><tr><td colspan="6" class="empty">No tuner activity yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="tab" id="tab-settings">
+    <div class="card">
+      <h2>Alert thresholds</h2>
+      <p class="desc">When a limit is exceeded the alert is logged and (if enabled) sent via Telegram.</p>
+      <div class="form-grid" id="alerts-form">
+        <div class="field"><label for="a_temp_limit">Temp limit (°C)</label><input type="number" id="a_temp_limit" step="1"></div>
+        <div class="field"><label for="a_vr_temp_limit">VR temp limit (°C)</label><input type="number" id="a_vr_temp_limit" step="1"></div>
+        <div class="field"><label for="a_power_limit">Power limit (W)</label><input type="number" id="a_power_limit" step="0.5"></div>
+        <div class="field"><label for="a_hashrate_drop_pct">Hashrate drop (%)</label><input type="number" id="a_hashrate_drop_pct" step="1"></div>
+        <div class="field"><label for="a_reject_rate_limit">Reject rate limit (%)</label><input type="number" id="a_reject_rate_limit" step="0.1"></div>
+        <div class="field"><label for="a_offline_minutes">Offline after (min)</label><input type="number" id="a_offline_minutes" step="1"></div>
+        <div class="field"><label for="a_cooldown_minutes">Alert cooldown (min)</label><input type="number" id="a_cooldown_minutes" step="5"></div>
+        <div class="field"><label for="a_daily_summary_hour">Daily summary hour (UTC)</label><input type="number" id="a_daily_summary_hour" min="0" max="23"></div>
+        <div class="field check"><input type="checkbox" id="a_telegram_enabled"><label for="a_telegram_enabled">Telegram alerts</label></div>
+        <div class="field check"><input type="checkbox" id="a_daily_summary_enabled"><label for="a_daily_summary_enabled">Daily summary</label></div>
+        <div class="field check"><input type="checkbox" id="a_achievement_alerts"><label for="a_achievement_alerts">Best-diff alerts</label></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="save-alerts">Save alert settings</button>
+        <button class="btn" id="test-telegram">Send Telegram test</button>
+        <span class="save-note" id="alerts-note">Saved ✓</span>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

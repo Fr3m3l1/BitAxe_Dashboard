@@ -1,0 +1,30 @@
+# Core web framework
+Flask==3.0.3
+Flask-Login==0.6.3
+Flask-WTF==1.2.1
+WTForms==3.1.2
+
+# Dashboard and visualization
+dash==2.18.2
+dash-bootstrap-components==1.7.1
+plotly==6.0.0
+pandas==2.2.3
+
+# Database
+SQLAlchemy==2.0.36
+Flask-SQLAlchemy==3.1.1
+
+# HTTP requests and utilities
+requests==2.32.3
+schedule==1.2.2
+python-dotenv==1.0.1
+
+# Security and validation
+bcrypt==4.2.1
+werkzeug==3.0.6
+
+# Async support
+eventlet==0.36.1
+
+# Development
+python-dateutil==2.9.0
