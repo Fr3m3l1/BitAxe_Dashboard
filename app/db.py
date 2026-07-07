@@ -111,6 +111,14 @@ def init_db():
 def upsert_miner(db, mac: str, hostname: str, asic_model: str) -> int:
     now = utcnow()
     row = db.execute("SELECT id FROM miners WHERE mac = ?", (mac,)).fetchone()
+    if row is None and hostname and mac != hostname:
+        # Adopt a legacy hostname-keyed entry (from the old-schema migration,
+        # which had no MAC) instead of creating a duplicate miner.
+        row = db.execute(
+            "SELECT id FROM miners WHERE mac = hostname AND hostname = ?", (hostname,)
+        ).fetchone()
+        if row:
+            db.execute("UPDATE miners SET mac = ? WHERE id = ?", (mac, row["id"]))
     if row:
         db.execute(
             "UPDATE miners SET hostname = ?, asic_model = ?, last_seen = ? WHERE id = ?",
