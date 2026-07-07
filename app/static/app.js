@@ -42,6 +42,46 @@ const fmt = {
     const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
     return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
   },
+  // Parse a difficulty that may be raw ("745151943982") or suffixed ("745.15G").
+  parseDiff(v) {
+    if (v == null) return 0;
+    const m = String(v).trim().match(/^([\d.]+)\s*([kKMGTPE]?)$/);
+    if (!m) return 0;
+    const mult = { k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18 }[m[2]] || 1;
+    return parseFloat(m[1]) * mult;
+  },
+  // Compact SI representation: 745151943982 -> "745.15 G"
+  si(n, d = 2) {
+    if (n == null || !isFinite(n) || n === 0) return n === 0 ? "0" : "—";
+    const units = ["", "K", "M", "G", "T", "P", "E", "Z"];
+    let i = 0, v = Math.abs(n);
+    while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
+    return `${(Math.sign(n) * v).toFixed(v >= 100 ? 1 : d)}${i ? " " + units[i] : ""}`;
+  },
+  // Human duration from seconds, with cosmic context for absurd values.
+  dur(sec) {
+    if (sec == null || !isFinite(sec)) return "—";
+    if (sec < 90) return `${sec.toFixed(0)} seconds`;
+    if (sec < 5400) return `${(sec / 60).toFixed(0)} minutes`;
+    if (sec < 172800) return `${(sec / 3600).toFixed(1)} hours`;
+    if (sec < 63072000) return `${(sec / 86400).toFixed(1)} days`;
+    const years = sec / 31557600;
+    if (years < 1000) return `${years.toFixed(0)} years`;
+    if (years < 1e6) return `${(years / 1000).toFixed(1)} thousand years`;
+    if (years < 1e9) return `${(years / 1e6).toFixed(1)} million years`;
+    const universe = years / 13.8e9;
+    return `${(years / 1e9).toFixed(1)} billion years (${universe.toFixed(1)}× the age of the universe)`;
+  },
+  odds(p) {
+    if (!p || p <= 0) return "—";
+    return `1 in ${fmt.si(1 / p, 1)}`;
+  },
+  era(y) {
+    if (y == null) return null;
+    const year = Math.floor(y);
+    const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Math.min(11, Math.floor((y - year) * 12))];
+    return `${month} ${year}`;
+  },
 };
 
 /* ---------------- tabs ---------------- */
@@ -50,6 +90,7 @@ document.querySelectorAll("nav button").forEach((btn) => {
     document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${btn.dataset.tab}`));
     if (btn.dataset.tab === "alerts") loadAlerts();
+    if (btn.dataset.tab === "nerd") loadNerd();
     if (btn.dataset.tab === "tuner") loadTunerTab();
     if (btn.dataset.tab === "settings") loadSettingsTab();
   });
@@ -124,7 +165,8 @@ function renderTiles() {
     tile("Core voltage", `${fmt.num(d.core_voltage, 0)}<span class="unit">mV</span>`, d.core_voltage_actual ? `actual ${fmt.num(d.core_voltage_actual, 0)} mV` : "") +
     tile("Fan", `${d.fan_rpm != null ? d.fan_rpm : "—"}<span class="unit">rpm</span>`, d.fan_speed != null ? `${d.fan_speed}%${d.auto_fan ? " · auto" : ""}` : "") +
     tile("Shares", `${d.shares_accepted != null ? d.shares_accepted.toLocaleString() : "—"}`, rejRate != null ? `${d.shares_rejected || 0} rejected (${rejRate.toFixed(2)}%)` : "") +
-    tile("Best difficulty", `${d.best_diff || "—"}`, d.best_session_diff ? `session ${d.best_session_diff}` : "") +
+    tile("Best difficulty", `${fmt.si(fmt.parseDiff(d.best_diff))}`,
+      d.best_session_diff ? `session ${fmt.si(fmt.parseDiff(d.best_session_diff))}` : "") +
     tile("Uptime", fmt.uptime(d.uptime_seconds), d.wifi_rssi != null ? `WiFi ${d.wifi_rssi} dBm` : "") +
     tile("Pool", d.using_fallback ? `<span style="color:var(--warning)">fallback</span>` : "primary", d.stratum_url || "");
 }
@@ -269,6 +311,104 @@ async function loadAlerts() {
         <td>${a.message.replace(/<[^>]+>/g, "")}</td>
       </tr>`).join("");
   } catch (e) { body.innerHTML = `<tr><td colspan="5" class="empty">Failed to load alerts</td></tr>`; }
+}
+
+/* ---------------- nerd stats tab ---------------- */
+async function loadNerd() {
+  const el = document.getElementById("nerd-content");
+  const m = currentMiner();
+  if (!m) { el.innerHTML = `<div class="empty">No miner yet</div>`; return; }
+  try {
+    const d = await api(`/api/nerd?mac=${encodeURIComponent(m.mac)}`);
+    if (d.error) { el.innerHTML = `<div class="empty">${d.error}</div>`; return; }
+    const net = d.network;
+    const sections = [];
+
+    // --- block hunting ---
+    let hunt = `<div class="tiles">`;
+    if (d.exp_block_seconds) {
+      hunt += `<div class="tile hero"><div class="label">Expected time to solo-find a block</div>
+        <div class="value" style="font-size:34px">${fmt.dur(d.exp_block_seconds)}</div>
+        <div class="sub">at ${fmt.num(d.hashrate_ghs, 0)} GH/s vs current network difficulty</div></div>`;
+      hunt += tile("Odds per day", fmt.odds(d.block_odds_per_day), "chance of a block in 24h");
+      hunt += tile("Odds per year", fmt.odds(d.block_odds_per_day * 365), "keep the dream alive");
+    }
+    if (d.share_of_network) {
+      hunt += tile("Your slice of the network", `${(d.share_of_network * 100).toExponential(2)}<span class="unit">%</span>`,
+        `the network ≈ ${fmt.si(1 / d.share_of_network, 1)} of your miner`);
+    }
+    hunt += `</div>`;
+    sections.push(`<div class="card"><h2>🎯 Block hunting</h2>
+      <p class="desc">Solo mining is a lottery where you buy ${fmt.si(d.hashrate_ghs * 1e9 || 0, 0)} tickets per second. These are your odds.</p>${hunt}</div>`);
+
+    // --- best difficulty ---
+    let bd = `<div class="tiles">`;
+    bd += tile("All-time best share", fmt.si(d.best_diff),
+      `exactly ${Math.round(d.best_diff).toLocaleString()}`);
+    if (d.best_vs_network != null)
+      bd += tile("Of a block", `${(d.best_vs_network * 100).toFixed(4)}<span class="unit">%</span>`,
+        `a block needs ${fmt.si(net.difficulty)} — you're ${fmt.si(1 / d.best_vs_network, 0)}× short`);
+    if (d.best_era_year)
+      bd += tile("Time machine", `${fmt.era(d.best_era_year)}`,
+        "this share would have solved a real block back then");
+    if (d.exp_beat_best_seconds)
+      bd += tile("New personal record in…", fmt.dur(d.exp_beat_best_seconds), "expected wait at current hashrate");
+    bd += `</div><div class="tiles" style="margin-top:2px">`;
+    bd += tile("Session best share", fmt.si(d.session_best_diff),
+      `exactly ${Math.round(d.session_best_diff).toLocaleString()}`);
+    if (d.exp_beat_session_seconds)
+      bd += tile("Session record beaten in…", fmt.dur(d.exp_beat_session_seconds), "expected wait");
+    if (d.session_best_era_year)
+      bd += tile("Session time machine", `${fmt.era(d.session_best_era_year)}`, "when this was block-worthy");
+    bd += `</div>`;
+    sections.push(`<div class="card"><h2>🏆 Best difficulty</h2>
+      <p class="desc">Every share is a dice roll; the best one shows how lucky you've been. Doubling your best takes as long again, on average.</p>${bd}</div>`);
+
+    // --- network ---
+    if (net) {
+      let nw = `<div class="tiles">`;
+      nw += tile("Network difficulty", fmt.si(net.difficulty), `exactly ${Math.round(net.difficulty).toLocaleString()}`);
+      nw += tile("Network hashrate", `${fmt.si(net.network_hashrate)}<span class="unit">H/s</span>`, "");
+      if (net.height) nw += tile("Block height", net.height.toLocaleString(), "");
+      if (net.adjustment && net.adjustment.estimated_change_pct != null) {
+        const a = net.adjustment;
+        const chg = a.estimated_change_pct;
+        nw += tile("Next difficulty adjustment",
+          `<span class="delta ${chg >= 0 ? "down" : "up"}">${chg >= 0 ? "▲" : "▼"} ${Math.abs(chg).toFixed(2)}%</span>`,
+          `${(a.progress_pct || 0).toFixed(1)}% through epoch · ${a.remaining_blocks?.toLocaleString() ?? "—"} blocks left` +
+          (a.estimated_retarget_ts ? ` · ~${new Date(a.estimated_retarget_ts * 1000).toLocaleDateString()}` : ""));
+      }
+      if (net.halving_eta_seconds)
+        nw += tile("Next halving", fmt.dur(net.halving_eta_seconds),
+          `at block ${net.next_halving_height.toLocaleString()} (${net.halving_blocks_left.toLocaleString()} to go)`);
+      nw += `</div>`;
+      sections.push(`<div class="card"><h2>🌐 Bitcoin network</h2>
+        <p class="desc">Live from mempool.space, refreshed every 10 minutes.</p>${nw}</div>`);
+    } else {
+      sections.push(`<div class="card"><h2>🌐 Bitcoin network</h2><p class="desc">Network data currently unavailable — retrying in the background.</p></div>`);
+    }
+
+    // --- the grind ---
+    let gr = `<div class="tiles">`;
+    if (d.lifetime_hashes) {
+      gr += tile("Hashes computed", fmt.si(d.lifetime_hashes),
+        `≈ ${d.lifetime_hashes.toExponential(2)} over ${fmt.dur(d.observed_seconds)} observed`);
+      if (net) gr += tile("Bad luck insurance", fmt.si(d.lifetime_hashes / (net.difficulty * 4294967296) * 100, 4) + `<span class="unit">%</span>`,
+        "of one expected block's work already done");
+    }
+    if (d.shares_24h) {
+      gr += tile("Shares (24h)", d.shares_24h.toLocaleString(),
+        d.hashrate_ghs ? `≈ ${fmt.si(d.hashrate_ghs * 1e9 * 86400 / d.shares_24h)} hashes per share` : "");
+    }
+    gr += `</div>`;
+    sections.push(`<div class="card"><h2>⛏️ The grind</h2>
+      <p class="desc">What your miner has actually chewed through (since this dashboard started recording).</p>${gr}</div>`);
+
+    el.innerHTML = sections.join("");
+  } catch (e) {
+    console.error(e);
+    el.innerHTML = `<div class="empty">Failed to load nerd stats</div>`;
+  }
 }
 
 /* ---------------- settings helpers ---------------- */

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import alerts, config, db as dbm
+from . import alerts, config, db as dbm, network
 from .routes import router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -50,12 +50,23 @@ async def _housekeeping_loop():
         await asyncio.sleep(600)
 
 
+async def _network_refresh_loop():
+    """Keep the Bitcoin network-status cache warm so /api/nerd never blocks."""
+    while True:
+        try:
+            await asyncio.to_thread(network.get_network_status)
+        except Exception:
+            logger.exception("network status refresh failed")
+        await asyncio.sleep(600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     dbm.init_db()
     if not config.API_KEY:
         logger.warning("API_KEY is not set — the ingest endpoint accepts unauthenticated data!")
-    tasks = [asyncio.create_task(_watchdog_loop()), asyncio.create_task(_housekeeping_loop())]
+    tasks = [asyncio.create_task(_watchdog_loop()), asyncio.create_task(_housekeeping_loop()),
+             asyncio.create_task(_network_refresh_loop())]
     yield
     for t in tasks:
         t.cancel()

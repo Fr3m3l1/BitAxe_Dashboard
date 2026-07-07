@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Body, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
-from . import alerts, config, db as dbm, ingest, telegram
+from . import alerts, config, db as dbm, ingest, network, telegram
 from .defaults import ALERT_DEFAULTS, TUNER_DEFAULTS
+from .ingest import parse_diff
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -219,6 +220,82 @@ def api_stats(request: Request, mac: str, hours: float = 24):
         "uptime_seconds": last["uptime_seconds"],
         "best_diff": last["best_diff"], "best_session_diff": last["best_session_diff"],
     }
+
+
+@router.get("/api/nerd")
+def api_nerd(request: Request, mac: str):
+    """Nerd stats: block-hunting odds, best-difficulty context, network info."""
+    _require_session(request)
+    TWO32 = 2**32
+    with dbm.get_db() as db:
+        miner = db.execute("SELECT id FROM miners WHERE mac = ?", (mac,)).fetchone()
+        if not miner:
+            raise HTTPException(status_code=404, detail="Unknown miner")
+        hr_row = db.execute(
+            "SELECT AVG(hash_rate) hr FROM samples WHERE miner_id = ? AND ts > ?",
+            (miner["id"], _cutoff(1))).fetchone()
+        latest = db.execute(
+            "SELECT * FROM samples WHERE miner_id = ? ORDER BY ts DESC LIMIT 1",
+            (miner["id"],)).fetchone()
+        if not latest:
+            return {"error": "no data"}
+        # Total hashes actually observed: integrate hashrate over sample gaps
+        # (gaps > 10 min count as downtime).
+        hashes_row = db.execute(
+            """WITH t AS (
+                 SELECT hash_rate,
+                        strftime('%s', ts) - strftime('%s', LAG(ts) OVER (ORDER BY ts)) dt
+                 FROM samples WHERE miner_id = ?)
+               SELECT SUM(hash_rate * 1e9 * MIN(dt, 600)) total,
+                      SUM(MIN(dt, 600)) seconds
+               FROM t WHERE dt IS NOT NULL AND hash_rate IS NOT NULL""",
+            (miner["id"],)).fetchone()
+        shares_24h = db.execute(
+            """SELECT MAX(shares_accepted) - MIN(shares_accepted) n
+               FROM samples WHERE miner_id = ? AND ts > ? AND shares_accepted IS NOT NULL""",
+            (miner["id"], _cutoff(24))).fetchone()
+
+    hashrate_ghs = hr_row["hr"] or latest["hash_rate"] or 0
+    hashrate_hs = hashrate_ghs * 1e9
+    best = parse_diff(latest["best_diff"])
+    session_best = parse_diff(latest["best_session_diff"])
+
+    out = {
+        "hashrate_ghs": hashrate_ghs,
+        "best_diff": best,
+        "session_best_diff": session_best,
+        "lifetime_hashes": hashes_row["total"],
+        "observed_seconds": hashes_row["seconds"],
+        "shares_24h": shares_24h["n"],
+        "best_era_year": network.era_of_difficulty(best),
+        "session_best_era_year": network.era_of_difficulty(session_best),
+    }
+    if hashrate_hs > 0:
+        # Expected seconds until a share exceeds the given difficulty.
+        out["exp_beat_best_seconds"] = best * TWO32 / hashrate_hs if best else None
+        out["exp_beat_session_seconds"] = session_best * TWO32 / hashrate_hs if session_best else None
+
+    net = network.get_network_status()
+    if net:
+        diff = net["difficulty"]
+        halving_interval = 210000
+        out["network"] = {
+            **net,
+            "next_halving_height": (net["height"] // halving_interval + 1) * halving_interval
+            if net["height"] else None,
+        }
+        if net["height"]:
+            blocks_left = out["network"]["next_halving_height"] - net["height"]
+            out["network"]["halving_blocks_left"] = blocks_left
+            out["network"]["halving_eta_seconds"] = blocks_left * 600
+        if hashrate_hs > 0:
+            exp_block = diff * TWO32 / hashrate_hs
+            out["exp_block_seconds"] = exp_block
+            out["block_odds_per_day"] = 86400 / exp_block  # ~probability/day
+            out["share_of_network"] = hashrate_hs / net["network_hashrate"]
+        out["best_vs_network"] = best / diff if best else None
+        out["session_vs_network"] = session_best / diff if session_best else None
+    return out
 
 
 @router.get("/api/alerts")
